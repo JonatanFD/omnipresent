@@ -8,6 +8,14 @@ Omnipresent lets you use one keyboard and mouse to control multiple computers at
 
 The goal is to do this better than existing solutions (Synergy, Barrier, Input Leap, etc.) — faster, more reliable, and simpler to set up.
 
+# Architecture
+
+The core is split into bounded-context modules (Input, Topology, Session,
+Security, Transport), a shared-kernel **Protocol** crate, and a **Runtime**
+daemon that wires them together and serves the CLI. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design, ports,
+data flow, and crate layout.
+
 # CLI Interface
 
 All interaction happens through the `omni` binary.
