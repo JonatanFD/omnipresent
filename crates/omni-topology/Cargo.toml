@@ -7,3 +7,4 @@ repository.workspace = true
 
 [dependencies]
 omni-protocol.workspace = true
+serde.workspace = true
