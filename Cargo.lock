@@ -130,6 +130,7 @@ name = "omni-topology"
 version = "0.1.0"
 dependencies = [
  "omni-protocol",
+ "serde",
 ]
 
 [[package]]
