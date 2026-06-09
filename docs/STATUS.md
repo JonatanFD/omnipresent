@@ -5,14 +5,16 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-08._
+_Last updated: 2026-06-09._
 
 ## Where we are
 
 The project is in early **foundation** stage. The Cargo workspace and all
-bounded-context crates exist and compile; the shared-kernel **Protocol** crate is
-implemented and tested. Every other crate is a documented placeholder with no
-behaviour yet. Nothing connects two machines yet.
+bounded-context crates exist and compile. Three are implemented and tested: the
+shared-kernel **Protocol** crate, the **Topology** crate (virtual desktop and
+edge crossings), and the **Security** crate (allowlist + TOFU trust policy). The
+remaining crates are documented placeholders with no behaviour yet. Nothing
+connects two machines yet.
 
 The whole workspace builds clean under `cargo fmt`, `cargo clippy -D warnings`,
 and `cargo test`.
@@ -22,10 +24,10 @@ and `cargo test`.
 | Crate            | Status        | What's there                                                                 |
 | ---------------- | ------------- | ---------------------------------------------------------------------------- |
 | `omni-protocol`  | **Implemented** | Ids, input events, control messages, and the postcard wire codec. 15 tests. |
+| `omni-topology`  | **Implemented** | Virtual desktop layout, edge crossings, and the `LayoutStore` port. 13 tests. |
+| `omni-security`  | **Implemented** | Allowlist + TOFU trust policy, `TrustStore`/`CertProvider` ports. 13 tests. |
 | `omni-input`     | Scaffold      | Crate + responsibility doc only. No ports or adapters yet.                    |
-| `omni-topology`  | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-session`   | Scaffold      | Crate + responsibility doc only.                                             |
-| `omni-security`  | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-transport` | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-runtime`   | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-cli`       | Scaffold      | `omni` binary prints "not yet implemented".                                  |
@@ -43,6 +45,31 @@ and `cargo test`.
   [postcard](https://docs.rs/postcard) — a compact varint binary format chosen
   for small datagrams and low-latency (de)serialization. Truncated or empty
   input is rejected.
+
+### What `omni-topology` provides
+
+- **Geometry** (`geometry`): `Screen`, `Point`, and `Edge` (with `opposite` and
+  orientation helpers).
+- **Layout** (`layout`): `Machine` and `VirtualLayout` — an edge-link arrangement
+  where each machine knows the neighbor past each edge (kept symmetric). `advance`
+  moves the cursor by a `MouseDelta` and either stays on screen, clamps at a
+  neighborless edge, or crosses onto the neighbor's opposite edge, mapping the
+  position along the shared edge proportionally so crossings stay seamless across
+  differently sized screens.
+- **Store** (`store`): the `LayoutStore` port plus an in-memory adapter.
+
+### What `omni-security` provides
+
+- **Trust policy** (`trust`): `AllowList`, `PeerIdentity`, and a pure `evaluate`
+  function returning a `TrustDecision` — allowlist gate first, then TOFU (unseen
+  → `TrustOnFirstUse`, matching pin → `Trusted`, changed pin →
+  `FingerprintMismatch`). `TrustAuthority` applies it against a store and records
+  approvals (`accept`/`forget`).
+- **Store** (`store`): the `TrustStore` port (allowlist + pinned fingerprints)
+  plus an in-memory adapter.
+- **Identity** (`identity`): the `CertProvider` port and `LocalIdentity`, whose
+  `Debug` redacts key and certificate bytes so material never leaks into logs.
+  Real certificate/DTLS cryptography is deferred to Transport's adapter.
 
 ## Tooling & dependencies
 
@@ -69,25 +96,19 @@ against ports using in-memory adapters.
 Crates are built in dependency order so each one can be tested against the layer
 below without stubbing the layers above. Suggested sequence:
 
-1. **`omni-topology`** — pure domain, no OS or network, so it is the easiest next
-   TDD target. Model `Machine`/`Screen`/`EdgeLink`/`VirtualLayout`, track the
-   virtual cursor, and detect edge crossings (`Crossing { peer, entry_point }`).
-2. **`omni-security`** — trust policy as pure domain: `AllowList`, TOFU pinning
-   and fingerprint-change rejection, `TrustDecision`. Define the `TrustStore` and
-   `CertProvider` ports; keep real cert/key handling behind adapters.
-3. **`omni-session`** — session lifecycle and dynamic Controller/Target roles,
+1. **`omni-session`** — session lifecycle and dynamic Controller/Target roles,
    reacting to Topology crossings and connect/disconnect. Define `SessionEvents`.
-4. **`omni-input`** — the `InputSource`/`InputSink` ports with an in-memory test
+2. **`omni-input`** — the `InputSource`/`InputSink` ports with an in-memory test
    adapter first, then per-OS adapters (macOS CGEvent/IOKit, Linux evdev/uinput).
    This is the first crate that touches the OS, so it needs the privilege model
    from `CLAUDE.md`.
-5. **`omni-transport`** — the UDP socket plus DTLS 1.3 channel, framing Protocol
+3. **`omni-transport`** — the UDP socket plus DTLS 1.3 channel, framing Protocol
    messages and enforcing the replay window. Requires choosing a DTLS-capable
    Rust stack (research per the "latest libraries" rule before implementing).
-6. **`omni-runtime`** — wire every adapter into the ports, drive the
+4. **`omni-runtime`** — wire every adapter into the ports, drive the
    capture→route→send and receive→inject pipelines, expose local IPC for the CLI,
    and apply least-privilege startup.
-7. **`omni-cli`** — flesh out the `omni` subcommands against the Runtime IPC
+5. **`omni-cli`** — flesh out the `omni` subcommands against the Runtime IPC
    surface.
 
 Cross-cutting, can come at any point:
