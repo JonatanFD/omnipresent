@@ -10,13 +10,16 @@ _Last updated: 2026-06-09._
 ## Where we are
 
 The project is in early **foundation** stage. The Cargo workspace and all
-bounded-context crates exist and compile. Four are implemented and tested: the
-shared-kernel **Protocol** crate, the **Topology** crate (virtual desktop and
+bounded-context crates exist and compile. Four are fully implemented and tested:
+the shared-kernel **Protocol** crate, the **Topology** crate (virtual desktop and
 edge crossings), the **Security** crate (allowlist + TOFU trust policy), and the
-**Session** crate (lifecycle, roles, and input routing). **Input** has its ports
-and in-memory adapters; its real per-OS adapters are still to come. **Transport**,
-**Runtime**, and **CLI** remain documented placeholders. Nothing connects two
-machines yet.
+**Session** crate (lifecycle, roles, and input routing). **Input** and
+**Transport** have their ports and in-memory/loopback adapters; their real
+adapters (per-OS input, and the QUIC connection) are still to come. **Runtime**
+and **CLI** remain documented placeholders. Nothing connects two machines yet.
+
+The secure channel is **QUIC** (TLS 1.3 over UDP), via `quinn` + `rustls` —
+adopted in place of the originally planned DTLS 1.3 (see "Open decisions").
 
 The whole workspace builds clean under `cargo fmt`, `cargo clippy -D warnings`,
 and `cargo test`.
@@ -30,7 +33,7 @@ and `cargo test`.
 | `omni-security`  | **Implemented** | Allowlist + TOFU trust policy, `TrustStore`/`CertProvider` ports. 13 tests. |
 | `omni-session`   | **Implemented** | Session lifecycle, dynamic roles, active-target routing, `SessionEvents` port. 12 tests. |
 | `omni-input`     | **Ports + test adapter** | `InputSource`/`InputSink` ports and in-memory adapters. 5 tests. Real OS adapters pending. |
-| `omni-transport` | Scaffold      | Crate + responsibility doc only.                                             |
+| `omni-transport` | **Ports + test adapter** | `SecureChannel` port, message framing over QUIC datagrams, loopback channel. 8 tests. Real QUIC adapter pending. |
 | `omni-runtime`   | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-cli`       | Scaffold      | `omni` binary prints "not yet implemented".                                  |
 
@@ -71,7 +74,8 @@ and `cargo test`.
   plus an in-memory adapter.
 - **Identity** (`identity`): the `CertProvider` port and `LocalIdentity`, whose
   `Debug` redacts key and certificate bytes so material never leaks into logs.
-  Real certificate/DTLS cryptography is deferred to Transport's adapter.
+  Real certificate handling is deferred to Transport's QUIC adapter, which feeds
+  this material into rustls and enforces TOFU via a custom certificate verifier.
 
 ### What `omni-session` provides
 
@@ -93,6 +97,18 @@ and `cargo test`.
   hardware and exercise the capture→send and receive→inject pipelines.
 - **Pending:** the real per-OS adapters (macOS CGEvent/IOKit, Linux evdev/uinput)
   — see "What's next".
+
+### What `omni-transport` provides
+
+- **Secure channel** (`channel`): the `SecureChannel` port — an established,
+  per-peer connection that sends and receives datagram payloads. QUIC provides
+  the cryptography, so the port deals only in already-protected bytes. A
+  `LoopbackChannel` pair stands in for a real connection in tests.
+- **Message framing** (`transport`): `Transport` encodes a Protocol `Message` and
+  sends it as one (unreliable) datagram, and decodes received datagrams back,
+  surfacing channel vs codec failures via `TransportError`.
+- **Pending:** the real QUIC adapter over `quinn` + `rustls` (mutual TLS, TOFU
+  verifier, unreliable datagrams) — see "What's next".
 
 ## Tooling & dependencies
 
@@ -119,29 +135,34 @@ against ports using in-memory adapters.
 Crates are built in dependency order so each one can be tested against the layer
 below without stubbing the layers above. Suggested sequence:
 
-1. **`omni-transport`** — the UDP socket plus DTLS 1.3 channel, framing Protocol
-   messages and enforcing the replay window. Requires choosing a DTLS-capable
-   Rust stack (research per the "latest libraries" rule before implementing).
-2. **`omni-runtime`** — wire every adapter into the ports, drive the
+1. **`omni-runtime`** — wire every adapter into the ports, drive the
    capture→route→send and receive→inject pipelines, expose local IPC for the CLI,
    and apply least-privilege startup.
-3. **`omni-cli`** — flesh out the `omni` subcommands against the Runtime IPC
+2. **`omni-cli`** — flesh out the `omni` subcommands against the Runtime IPC
    surface.
 
 Cross-cutting, can come at any point:
 
+- **`omni-transport` real QUIC adapter** — a `SecureChannel` over `quinn` +
+  `rustls`: mutual TLS, a custom certificate verifier enforcing Security's
+  TOFU/allowlist, and unreliable datagrams for input. Deferred because it needs a
+  live two-endpoint handshake to exercise meaningfully.
 - **`omni-input` real OS adapters** — macOS (CGEvent/IOKit) and Linux
   (evdev/uinput) implementations of `InputSource`/`InputSink`, with the
   least-privilege model from `CLAUDE.md`. Deferred because they need platform
   APIs and live hardware to exercise.
 - **CI**: a GitHub Actions workflow running fmt + clippy + test (currently these
   run only locally).
-- **DTLS stack selection**: the single biggest open technical decision; it shapes
-  Transport and Security and should be researched before step 1.
 
 ## Open decisions
 
-- Which Rust DTLS 1.3 stack to standardize on (affects Transport + Security).
+- **Secure channel: decided — QUIC** (TLS 1.3 over UDP) via `quinn` + `rustls`,
+  replacing the originally planned DTLS 1.3. Rationale: no production-ready
+  *pure-Rust* DTLS 1.3 + mTLS exists (rustls has no DTLS; `rusty-dtls` is PSK-only;
+  the webrtc `dtls` crate is 1.2 only; wolfSSL/OpenSSL mean a C dependency). QUIC
+  keeps every required property (UDP-only, mutual cert auth, TOFU, anti-replay,
+  modern crypto), carries input over unreliable datagrams (RFC 9221), and has the
+  most mature pure-Rust implementation.
 - Local IPC mechanism for CLI↔daemon (e.g. Unix domain socket) — to be fixed when
   Runtime starts.
 - Wire-format versioning: whether to prepend a protocol version byte in Transport
