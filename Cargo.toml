@@ -1,6 +1,20 @@
-[package]
-name = "omnipresent"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/JonatanFD/omnipresent"
 
-[dependencies]
+# Internal crates are referenced through the workspace so versions and paths
+# stay defined in exactly one place. Each crate opts in with `*.workspace = true`.
+[workspace.dependencies]
+omni-protocol = { path = "crates/omni-protocol" }
+omni-input = { path = "crates/omni-input" }
+omni-topology = { path = "crates/omni-topology" }
+omni-session = { path = "crates/omni-session" }
+omni-security = { path = "crates/omni-security" }
+omni-transport = { path = "crates/omni-transport" }
+omni-runtime = { path = "crates/omni-runtime" }
