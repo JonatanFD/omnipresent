@@ -35,3 +35,7 @@ paths:
 - Reliability: The system must be reliable, with no data loss or corruption, and fast response times.
 - Scalability: The system must be scalable, with the ability to handle increasing loads and data volumes.
 - Maintainability: The system must be maintainable, with clear and concise code that is easy to understand and modify.
+
+# Development Workflow
+
+- Documentation must keep up with the code. Whenever a module (crate) is finished, update `docs/STATUS.md` in the same change: move that crate to "Implemented" with a short summary of what it provides, refresh the "What's next" roadmap, and bump the "Last updated" date.
