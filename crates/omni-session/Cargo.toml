@@ -1,0 +1,10 @@
+[package]
+name = "omni-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+omni-protocol.workspace = true
+omni-topology.workspace = true

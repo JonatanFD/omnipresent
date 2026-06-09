@@ -1,0 +1,9 @@
+[package]
+name = "omni-input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+omni-protocol.workspace = true
