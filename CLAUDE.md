@@ -14,7 +14,8 @@ The core is split into bounded-context modules (Input, Topology, Session,
 Security, Transport), a shared-kernel **Protocol** crate, and a **Runtime**
 daemon that wires them together and serves the CLI. See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design, ports,
-data flow, and crate layout.
+data flow, and crate layout. See [`docs/STATUS.md`](docs/STATUS.md) for the
+current implementation status and what's next to build.
 
 # CLI Interface
 
