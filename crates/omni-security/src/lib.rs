@@ -6,9 +6,9 @@
 //! it tells Transport who and what is acceptable, and Transport calls in to
 //! authorize a handshake.
 //!
-//! The real cryptography (certificate generation, the DTLS handshake) lives in
-//! Transport's adapter once the DTLS stack is chosen; everything here is pure
-//! policy and is fully unit-tested with in-memory adapters.
+//! The real cryptography (certificate generation, the QUIC/TLS 1.3 handshake)
+//! lives in Transport's QUIC adapter; everything here is pure policy and is fully
+//! unit-tested with in-memory adapters.
 
 pub mod identity;
 pub mod store;

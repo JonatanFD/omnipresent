@@ -28,7 +28,7 @@ rules in [`.claude/rules/constrains.md`](../.claude/rules/constrains.md)
 | **Topology**  | PCManager      | Track each machine's screen geometry and position; resolve edge crossings |
 | **Session**   | StateManager   | Manage active sessions and dynamic Controller/Target roles |
 | **Security**  | Security       | Identity, trust policy (mTLS, TOFU, allowlist, anti-replay) |
-| **Transport** | *(new)*        | UDP socket + DTLS channel; framing and (de)serialization   |
+| **Transport** | *(new)*        | QUIC connection (TLS 1.3 over UDP); framing and (de)serialization |
 | **Protocol**  | *(new, shared)*| Wire message and event type definitions (shared kernel)    |
 | **Runtime**   | *(new)*        | Composition root: the daemon that wires modules and serves the CLI |
 
@@ -120,7 +120,8 @@ Implements the rules in `CLAUDE.md`:
 - mTLS identity — load/verify this machine's cert and the peer's.
 - TOFU — pin a peer's fingerprint on first accept; reject changes thereafter.
 - Allowlist — only listed peers may establish a channel.
-- Anti-replay policy — configure and enforce the DTLS replay window.
+- Anti-replay — provided by QUIC's built-in packet protection; Security informs
+  Transport which peers and certificates are acceptable for the handshake.
 
 **Domain types:** `PeerIdentity`, `Fingerprint`, `TrustDecision`,
 `AllowList`.
@@ -137,23 +138,29 @@ acceptable; Transport calls into Security to authorize a handshake.
 
 **Responsibility:** move encoded messages between machines. The *pipe*.
 
-- Owns the UDP socket and the DTLS 1.3 channel over it.
+- Owns the **QUIC** connection (TLS 1.3 over UDP) to each peer. QUIC, not a
+  separate DTLS layer, provides confidentiality, integrity, mutual
+  authentication, and replay protection.
 - Frames and (de)serializes Protocol messages to/from datagrams.
-- Enforces the anti-replay window (configured by Security) and drops anything
-  failing the DTLS layer.
+- Sends input events as **unreliable QUIC datagrams** (RFC 9221) — a lost one is
+  dropped, not retransmitted — keeping latency low; reliable signalling may use a
+  QUIC stream.
 
-**Domain types:** `Datagram`, `Channel`, `Endpoint`.
+**Domain types:** `Endpoint`, and the `Transport` glue over a channel.
 
 **Ports**
 
-- `Socket` — abstract UDP send/recv (real socket in prod, in-memory in tests).
-- `SecureChannel` — DTLS wrap/unwrap, authorized via Security.
+- `SecureChannel` — an established, authenticated per-peer connection that sends
+  and receives datagram payloads. QUIC subsumes the old "UDP socket + DTLS wrap"
+  split into one connection abstraction.
 
-**Adapters:** UDP socket adapter; DTLS adapter over the chosen Rust crate
-(to be selected per the "latest libraries" rule — e.g. `tokio` + a DTLS-capable
-TLS stack).
+**Adapters:** a QUIC adapter over [`quinn`](https://docs.rs/quinn) (`+ rustls`)
+for production; an in-memory **loopback** channel for tests. The quinn adapter
+configures rustls with this machine's certificate (from Security's `CertProvider`)
+and a custom verifier that enforces Security's TOFU/allowlist policy during the
+handshake.
 
-**Depends on:** Protocol, Security (for handshake authorization).
+**Depends on:** Protocol, Security (for handshake authorization and TOFU).
 
 ## 6. Protocol (shared kernel)
 
@@ -196,7 +203,7 @@ OS input
   → Topology                   is the cursor crossing an edge? to which peer?
   → Session                    which Target is active? (may flip on crossing)
   → Protocol                   encode InputEvent
-  → Transport (DTLS send)      datagram over UDP
+  → Transport (QUIC datagram)  encrypted datagram over UDP
   → network
 ```
 
@@ -204,7 +211,7 @@ OS input
 
 ```
 network
-  → Transport (DTLS recv)      verify channel, drop replays/invalid
+  → Transport (QUIC recv)      decrypt, drop replays/invalid (QUIC built-in)
   → Security                   peer authorized? (channel established under policy)
   → Protocol                   decode InputEvent
   → Session                    validate this belongs to an active session
