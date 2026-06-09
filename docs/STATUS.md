@@ -10,10 +10,11 @@ _Last updated: 2026-06-09._
 ## Where we are
 
 The project is in early **foundation** stage. The Cargo workspace and all
-bounded-context crates exist and compile. Two are implemented and tested: the
-shared-kernel **Protocol** crate and the **Topology** crate (virtual desktop and
-edge crossings). The remaining crates are documented placeholders with no
-behaviour yet. Nothing connects two machines yet.
+bounded-context crates exist and compile. Three are implemented and tested: the
+shared-kernel **Protocol** crate, the **Topology** crate (virtual desktop and
+edge crossings), and the **Security** crate (allowlist + TOFU trust policy). The
+remaining crates are documented placeholders with no behaviour yet. Nothing
+connects two machines yet.
 
 The whole workspace builds clean under `cargo fmt`, `cargo clippy -D warnings`,
 and `cargo test`.
@@ -24,9 +25,9 @@ and `cargo test`.
 | ---------------- | ------------- | ---------------------------------------------------------------------------- |
 | `omni-protocol`  | **Implemented** | Ids, input events, control messages, and the postcard wire codec. 15 tests. |
 | `omni-topology`  | **Implemented** | Virtual desktop layout, edge crossings, and the `LayoutStore` port. 13 tests. |
+| `omni-security`  | **Implemented** | Allowlist + TOFU trust policy, `TrustStore`/`CertProvider` ports. 13 tests. |
 | `omni-input`     | Scaffold      | Crate + responsibility doc only. No ports or adapters yet.                    |
 | `omni-session`   | Scaffold      | Crate + responsibility doc only.                                             |
-| `omni-security`  | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-transport` | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-runtime`   | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-cli`       | Scaffold      | `omni` binary prints "not yet implemented".                                  |
@@ -57,6 +58,19 @@ and `cargo test`.
   differently sized screens.
 - **Store** (`store`): the `LayoutStore` port plus an in-memory adapter.
 
+### What `omni-security` provides
+
+- **Trust policy** (`trust`): `AllowList`, `PeerIdentity`, and a pure `evaluate`
+  function returning a `TrustDecision` — allowlist gate first, then TOFU (unseen
+  → `TrustOnFirstUse`, matching pin → `Trusted`, changed pin →
+  `FingerprintMismatch`). `TrustAuthority` applies it against a store and records
+  approvals (`accept`/`forget`).
+- **Store** (`store`): the `TrustStore` port (allowlist + pinned fingerprints)
+  plus an in-memory adapter.
+- **Identity** (`identity`): the `CertProvider` port and `LocalIdentity`, whose
+  `Debug` redacts key and certificate bytes so material never leaks into logs.
+  Real certificate/DTLS cryptography is deferred to Transport's adapter.
+
 ## Tooling & dependencies
 
 - Rust workspace, edition 2024, resolver 3.
@@ -82,22 +96,19 @@ against ports using in-memory adapters.
 Crates are built in dependency order so each one can be tested against the layer
 below without stubbing the layers above. Suggested sequence:
 
-1. **`omni-security`** — trust policy as pure domain: `AllowList`, TOFU pinning
-   and fingerprint-change rejection, `TrustDecision`. Define the `TrustStore` and
-   `CertProvider` ports; keep real cert/key handling behind adapters.
-2. **`omni-session`** — session lifecycle and dynamic Controller/Target roles,
+1. **`omni-session`** — session lifecycle and dynamic Controller/Target roles,
    reacting to Topology crossings and connect/disconnect. Define `SessionEvents`.
-3. **`omni-input`** — the `InputSource`/`InputSink` ports with an in-memory test
+2. **`omni-input`** — the `InputSource`/`InputSink` ports with an in-memory test
    adapter first, then per-OS adapters (macOS CGEvent/IOKit, Linux evdev/uinput).
    This is the first crate that touches the OS, so it needs the privilege model
    from `CLAUDE.md`.
-4. **`omni-transport`** — the UDP socket plus DTLS 1.3 channel, framing Protocol
+3. **`omni-transport`** — the UDP socket plus DTLS 1.3 channel, framing Protocol
    messages and enforcing the replay window. Requires choosing a DTLS-capable
    Rust stack (research per the "latest libraries" rule before implementing).
-5. **`omni-runtime`** — wire every adapter into the ports, drive the
+4. **`omni-runtime`** — wire every adapter into the ports, drive the
    capture→route→send and receive→inject pipelines, expose local IPC for the CLI,
    and apply least-privilege startup.
-6. **`omni-cli`** — flesh out the `omni` subcommands against the Runtime IPC
+5. **`omni-cli`** — flesh out the `omni` subcommands against the Runtime IPC
    surface.
 
 Cross-cutting, can come at any point:
