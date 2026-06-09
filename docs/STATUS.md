@@ -10,11 +10,11 @@ _Last updated: 2026-06-09._
 ## Where we are
 
 The project is in early **foundation** stage. The Cargo workspace and all
-bounded-context crates exist and compile. Three are implemented and tested: the
+bounded-context crates exist and compile. Four are implemented and tested: the
 shared-kernel **Protocol** crate, the **Topology** crate (virtual desktop and
-edge crossings), and the **Security** crate (allowlist + TOFU trust policy). The
-remaining crates are documented placeholders with no behaviour yet. Nothing
-connects two machines yet.
+edge crossings), the **Security** crate (allowlist + TOFU trust policy), and the
+**Session** crate (lifecycle, roles, and input routing). The remaining crates are
+documented placeholders with no behaviour yet. Nothing connects two machines yet.
 
 The whole workspace builds clean under `cargo fmt`, `cargo clippy -D warnings`,
 and `cargo test`.
@@ -26,8 +26,8 @@ and `cargo test`.
 | `omni-protocol`  | **Implemented** | Ids, input events, control messages, and the postcard wire codec. 15 tests. |
 | `omni-topology`  | **Implemented** | Virtual desktop layout, edge crossings, and the `LayoutStore` port. 13 tests. |
 | `omni-security`  | **Implemented** | Allowlist + TOFU trust policy, `TrustStore`/`CertProvider` ports. 13 tests. |
+| `omni-session`   | **Implemented** | Session lifecycle, dynamic roles, active-target routing, `SessionEvents` port. 12 tests. |
 | `omni-input`     | Scaffold      | Crate + responsibility doc only. No ports or adapters yet.                    |
-| `omni-session`   | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-transport` | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-runtime`   | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-cli`       | Scaffold      | `omni` binary prints "not yet implemented".                                  |
@@ -71,6 +71,16 @@ and `cargo test`.
   `Debug` redacts key and certificate bytes so material never leaks into logs.
   Real certificate/DTLS cryptography is deferred to Transport's adapter.
 
+### What `omni-session` provides
+
+- **Sessions and roles** (`session`): `Role` (reversible Controller/Target),
+  `Session`, `ActiveTarget` (`Local` vs `Remote(peer)`), and `SessionManager` —
+  establishes and closes sessions, reverses roles, and switches the active target
+  in response to Topology `Crossing`s (crossing onto a peer routes input there;
+  crossing back home routes it local). Target-change events are deduplicated.
+- **Events** (`events`): the `SessionEvents` port (lifecycle, role, and
+  active-target changes) plus a recording adapter for tests.
+
 ## Tooling & dependencies
 
 - Rust workspace, edition 2024, resolver 3.
@@ -96,19 +106,17 @@ against ports using in-memory adapters.
 Crates are built in dependency order so each one can be tested against the layer
 below without stubbing the layers above. Suggested sequence:
 
-1. **`omni-session`** — session lifecycle and dynamic Controller/Target roles,
-   reacting to Topology crossings and connect/disconnect. Define `SessionEvents`.
-2. **`omni-input`** — the `InputSource`/`InputSink` ports with an in-memory test
+1. **`omni-input`** — the `InputSource`/`InputSink` ports with an in-memory test
    adapter first, then per-OS adapters (macOS CGEvent/IOKit, Linux evdev/uinput).
    This is the first crate that touches the OS, so it needs the privilege model
    from `CLAUDE.md`.
-3. **`omni-transport`** — the UDP socket plus DTLS 1.3 channel, framing Protocol
+2. **`omni-transport`** — the UDP socket plus DTLS 1.3 channel, framing Protocol
    messages and enforcing the replay window. Requires choosing a DTLS-capable
    Rust stack (research per the "latest libraries" rule before implementing).
-4. **`omni-runtime`** — wire every adapter into the ports, drive the
+3. **`omni-runtime`** — wire every adapter into the ports, drive the
    capture→route→send and receive→inject pipelines, expose local IPC for the CLI,
    and apply least-privilege startup.
-5. **`omni-cli`** — flesh out the `omni` subcommands against the Runtime IPC
+4. **`omni-cli`** — flesh out the `omni` subcommands against the Runtime IPC
    surface.
 
 Cross-cutting, can come at any point:
