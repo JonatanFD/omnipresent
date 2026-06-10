@@ -8,3 +8,12 @@ repository.workspace = true
 [dependencies]
 omni-protocol.workspace = true
 omni-security.workspace = true
+quinn.workspace = true
+rustls.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rcgen.workspace = true

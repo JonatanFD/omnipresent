@@ -8,3 +8,5 @@ repository.workspace = true
 [dependencies]
 omni-protocol.workspace = true
 serde.workspace = true
+rcgen.workspace = true
+sha2.workspace = true

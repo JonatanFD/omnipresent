@@ -7,14 +7,23 @@
 //! only — never a TCP fallback.
 //!
 //! The crate exposes the [`SecureChannel`] port (an established per-peer
-//! connection) and the [`Transport`] glue that frames messages over it. The real
-//! adapter wraps [`quinn`](https://docs.rs/quinn) and is a planned follow-up; for
-//! now a loopback channel exercises the framing and pipelines in tests.
+//! connection), the [`Transport`] glue that frames messages over it, and the
+//! production QUIC adapter over [`quinn`](https://docs.rs/quinn): a
+//! [`QuicEndpoint`] that dials and listens on one UDP socket, with the
+//! [`HandshakePolicy`] port enforced inside custom rustls certificate
+//! verifiers. A loopback channel stands in for QUIC in unit tests.
 
 pub mod channel;
 pub mod endpoint;
+pub mod policy;
+pub mod quic;
 pub mod transport;
+
+mod tls;
 
 pub use channel::{LoopbackChannel, SecureChannel};
 pub use endpoint::Endpoint;
+pub use policy::{HandshakePolicy, PolicyViolation};
+pub use quic::{ControlStream, QuicConnection, QuicEndpoint, QuicError};
+pub use tls::ALPN;
 pub use transport::{Transport, TransportError};
