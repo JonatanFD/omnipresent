@@ -30,8 +30,10 @@ pub struct MacosSink {
 }
 
 impl MacosSink {
-    pub fn new() -> Self {
-        Self::default()
+    /// Fallible for parity with the Linux sink (which must open uinput);
+    /// creating event sources on macOS cannot fail.
+    pub fn new() -> Result<Self, MacosInputError> {
+        Ok(Self::default())
     }
 
     fn inject_key(
@@ -134,6 +136,22 @@ impl InputSink for MacosSink {
             InputEvent::Button { button, action } => self.inject_button(button, action),
             InputEvent::Scroll(delta) => self.inject_scroll(delta),
         }
+    }
+
+    fn warp(&mut self, x: i32, y: i32) -> Result<(), Self::Error> {
+        let position = clamp_to_display(DisplayPoint {
+            x: x as f64,
+            y: y as f64,
+        });
+        let event = CGEvent::new_mouse_event(
+            event_source()?,
+            CGEventType::MouseMoved,
+            position.into(),
+            CGMouseButton::Left,
+        )
+        .map_err(|_| MacosInputError::EventCreation)?;
+        post(&event);
+        Ok(())
     }
 }
 

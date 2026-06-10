@@ -213,7 +213,10 @@ impl QuicConnection {
             .open_bi()
             .await
             .map_err(QuicError::Connection)?;
-        Ok(ControlStream { send, recv })
+        Ok(ControlStream {
+            sender: ControlSender { send },
+            receiver: ControlReceiver { recv },
+        })
     }
 
     /// Accepts the reliable control stream the initiator opened (target side).
@@ -223,7 +226,10 @@ impl QuicConnection {
             .accept_bi()
             .await
             .map_err(QuicError::Connection)?;
-        Ok(ControlStream { send, recv })
+        Ok(ControlStream {
+            sender: ControlSender { send },
+            receiver: ControlReceiver { recv },
+        })
     }
 
     /// Waits for the next datagram. Returns `None` once the connection closes.
@@ -278,16 +284,60 @@ impl SecureChannel for QuicConnection {
     }
 }
 
+impl crate::transport::Transport<QuicConnection> {
+    /// Waits for the next datagram message. Returns `None` once the connection
+    /// closes — the async sibling of [`Transport::recv`](crate::Transport::recv).
+    pub async fn recv_async(
+        &mut self,
+    ) -> Result<Option<Message>, crate::TransportError<QuicError>> {
+        match self.channel_mut().recv_datagram_async().await {
+            Some(payload) => decode(&payload)
+                .map(Some)
+                .map_err(crate::TransportError::Codec),
+            None => Ok(None),
+        }
+    }
+}
+
 /// The reliable signalling stream: length-prefixed Protocol [`Message`]s over
 /// one QUIC bidirectional stream. Loss here is retransmitted by QUIC — exactly
 /// what connect/accept/disconnect need (and what input events must avoid).
 #[derive(Debug)]
 pub struct ControlStream {
-    send: quinn::SendStream,
-    recv: quinn::RecvStream,
+    sender: ControlSender,
+    receiver: ControlReceiver,
 }
 
 impl ControlStream {
+    /// Sends one message, framed with a 4-byte big-endian length.
+    pub async fn send(&mut self, message: &Message) -> Result<(), QuicError> {
+        self.sender.send(message).await
+    }
+
+    /// Receives the next message. Returns `None` when the peer finished the
+    /// stream cleanly between frames.
+    pub async fn recv(&mut self) -> Result<Option<Message>, QuicError> {
+        self.receiver.recv().await
+    }
+
+    /// Finishes the send side, telling the peer no more control messages come.
+    pub fn finish(&mut self) {
+        self.sender.finish();
+    }
+
+    /// Splits the stream so sending and receiving can live in different tasks.
+    pub fn split(self) -> (ControlSender, ControlReceiver) {
+        (self.sender, self.receiver)
+    }
+}
+
+/// The sending half of a [`ControlStream`].
+#[derive(Debug)]
+pub struct ControlSender {
+    send: quinn::SendStream,
+}
+
+impl ControlSender {
     /// Sends one message, framed with a 4-byte big-endian length.
     pub async fn send(&mut self, message: &Message) -> Result<(), QuicError> {
         let payload = encode(message).map_err(QuicError::Codec)?;
@@ -304,6 +354,20 @@ impl ControlStream {
         Ok(())
     }
 
+    /// Finishes the send side, telling the peer no more control messages come.
+    pub fn finish(&mut self) {
+        // Finishing an already-closed stream is harmless.
+        let _ = self.send.finish();
+    }
+}
+
+/// The receiving half of a [`ControlStream`].
+#[derive(Debug)]
+pub struct ControlReceiver {
+    recv: quinn::RecvStream,
+}
+
+impl ControlReceiver {
     /// Receives the next message. Returns `None` when the peer finished the
     /// stream cleanly between frames.
     pub async fn recv(&mut self) -> Result<Option<Message>, QuicError> {
@@ -325,11 +389,5 @@ impl ControlStream {
             .map_err(QuicError::Read)?;
         let message = decode(&payload).map_err(QuicError::Codec)?;
         Ok(Some(message))
-    }
-
-    /// Finishes the send side, telling the peer no more control messages come.
-    pub fn finish(&mut self) {
-        // Finishing an already-closed stream is harmless.
-        let _ = self.send.finish();
     }
 }
