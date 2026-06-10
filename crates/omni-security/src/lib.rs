@@ -14,6 +14,8 @@ pub mod identity;
 pub mod store;
 pub mod trust;
 
-pub use identity::{CertProvider, InMemoryCertProvider, LocalIdentity};
+pub use identity::{
+    CertProvider, InMemoryCertProvider, LocalIdentity, fingerprint_of, generate_identity,
+};
 pub use store::{InMemoryTrustStore, TrustStore};
 pub use trust::{AllowList, PeerIdentity, TrustAuthority, TrustDecision, evaluate};

@@ -30,10 +30,10 @@ and `cargo test`.
 | ---------------- | ------------- | ---------------------------------------------------------------------------- |
 | `omni-protocol`  | **Implemented** | Ids, input events, control messages, and the postcard wire codec. 15 tests. |
 | `omni-topology`  | **Implemented** | Virtual desktop layout, edge crossings, and the `LayoutStore` port. 13 tests. |
-| `omni-security`  | **Implemented** | Allowlist + TOFU trust policy, `TrustStore`/`CertProvider` ports. 13 tests. |
+| `omni-security`  | **Implemented** | Allowlist + TOFU trust policy, `TrustStore`/`CertProvider` ports, self-signed identity generation. 15 tests. |
 | `omni-session`   | **Implemented** | Session lifecycle, dynamic roles, active-target routing, `SessionEvents` port. 12 tests. |
 | `omni-input`     | **Ports + test adapter** | `InputSource`/`InputSink` ports and in-memory adapters. 5 tests. Real OS adapters pending. |
-| `omni-transport` | **Ports + test adapter** | `SecureChannel` port, message framing over QUIC datagrams, loopback channel. 8 tests. Real QUIC adapter pending. |
+| `omni-transport` | **Implemented** | `SecureChannel` port, framing, loopback channel, and the real QUIC adapter (quinn + rustls, mTLS, TOFU verifiers, datagrams + control stream). 12 tests. |
 | `omni-runtime`   | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-cli`       | Scaffold      | `omni` binary prints "not yet implemented".                                  |
 
@@ -50,6 +50,9 @@ and `cargo test`.
   [postcard](https://docs.rs/postcard) — a compact varint binary format chosen
   for small datagrams and low-latency (de)serialization. Truncated or empty
   input is rejected.
+- **Handshake payloads**: `ConnectRequest` carries the initiator's screen size
+  and `Accept` carries the target's machine id and screen size, so each side can
+  place the other in its virtual desktop layout.
 
 ### What `omni-topology` provides
 
@@ -107,14 +110,21 @@ and `cargo test`.
 - **Message framing** (`transport`): `Transport` encodes a Protocol `Message` and
   sends it as one (unreliable) datagram, and decodes received datagrams back,
   surfacing channel vs codec failures via `TransportError`.
-- **Pending:** the real QUIC adapter over `quinn` + `rustls` (mutual TLS, TOFU
-  verifier, unreliable datagrams) — see "What's next".
+- **QUIC adapter** (`quic` + `tls`, with the `policy` port): `QuicEndpoint` owns
+  one UDP socket that both dials and listens (roles are dynamic), `QuicConnection`
+  is the production `SecureChannel` (unreliable datagrams for input), and
+  `ControlStream` frames signalling over one reliable bidirectional stream.
+  Mutual TLS 1.3 is mandatory; custom rustls certificate verifiers enforce the
+  `HandshakePolicy` port (implemented by the Runtime over Security's trust store),
+  so an unauthorized or fingerprint-changed peer never completes the handshake.
+  Exercised by live two-endpoint tests over localhost.
 
 ## Tooling & dependencies
 
 - Rust workspace, edition 2024, resolver 3.
-- Third-party deps pinned once in `[workspace.dependencies]`: `serde` 1.0,
-  `postcard` 1.1.
+- Third-party deps pinned once in `[workspace.dependencies]`: `serde`, `postcard`,
+  and the network/crypto stack (`quinn`, `rustls` + `ring`, `rcgen`, `sha2`,
+  `tokio`, `bytes`).
 - Quality gate per change: `cargo fmt --all`, `cargo clippy --workspace
   --all-targets -- -D warnings`, `cargo test`.
 
@@ -143,10 +153,6 @@ below without stubbing the layers above. Suggested sequence:
 
 Cross-cutting, can come at any point:
 
-- **`omni-transport` real QUIC adapter** — a `SecureChannel` over `quinn` +
-  `rustls`: mutual TLS, a custom certificate verifier enforcing Security's
-  TOFU/allowlist, and unreliable datagrams for input. Deferred because it needs a
-  live two-endpoint handshake to exercise meaningfully.
 - **`omni-input` real OS adapters** — macOS (CGEvent/IOKit) and Linux
   (evdev/uinput) implementations of `InputSource`/`InputSink`, with the
   least-privilege model from `CLAUDE.md`. Deferred because they need platform

@@ -5,6 +5,7 @@
 //! fingerprint is ever shown, honouring the "key material never logged" rule.
 
 use omni_protocol::Fingerprint;
+use sha2::{Digest, Sha256};
 use std::fmt;
 
 /// This machine's TLS identity: its certificate, its private key, and the
@@ -56,6 +57,48 @@ impl fmt::Debug for LocalIdentity {
             .field("private_key_der", &"<redacted>")
             .finish()
     }
+}
+
+/// Why generating a fresh identity failed.
+#[derive(Debug)]
+pub struct IdentityGenerationError(rcgen::Error);
+
+impl fmt::Display for IdentityGenerationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "could not generate identity: {}", self.0)
+    }
+}
+
+impl std::error::Error for IdentityGenerationError {}
+
+/// The SHA-256 fingerprint of a DER-encoded certificate — the value pinned on
+/// first use and compared on every later connection.
+pub fn fingerprint_of(certificate_der: &[u8]) -> Fingerprint {
+    let digest = Sha256::digest(certificate_der);
+    Fingerprint::from_bytes(digest.into())
+}
+
+/// Generates a fresh self-signed identity for this machine: an ECDSA P-256
+/// certificate (long-lived, since trust comes from TOFU pinning rather than
+/// expiry) and its private key.
+pub fn generate_identity(common_name: &str) -> Result<LocalIdentity, IdentityGenerationError> {
+    let mut params = rcgen::CertificateParams::new(vec![common_name.to_string()])
+        .map_err(IdentityGenerationError)?;
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, common_name);
+    let key_pair = rcgen::KeyPair::generate().map_err(IdentityGenerationError)?;
+    let certificate = params
+        .self_signed(&key_pair)
+        .map_err(IdentityGenerationError)?;
+
+    let certificate_der = certificate.der().to_vec();
+    let fingerprint = fingerprint_of(&certificate_der);
+    Ok(LocalIdentity::new(
+        certificate_der,
+        key_pair.serialize_der(),
+        fingerprint,
+    ))
 }
 
 /// Supplies this machine's identity to whoever needs it for a handshake.
@@ -124,5 +167,21 @@ mod tests {
         let provider = InMemoryCertProvider::new(sample());
         let id = provider.local_identity().unwrap();
         assert_eq!(id.fingerprint(), Fingerprint::from_bytes([1; 32]));
+    }
+
+    #[test]
+    fn generated_identity_has_a_matching_fingerprint() {
+        let id = generate_identity("alpha").unwrap();
+
+        assert!(!id.certificate_der().is_empty());
+        assert!(!id.private_key_der().is_empty());
+        assert_eq!(id.fingerprint(), fingerprint_of(id.certificate_der()));
+    }
+
+    #[test]
+    fn each_generated_identity_is_unique() {
+        let a = generate_identity("alpha").unwrap();
+        let b = generate_identity("alpha").unwrap();
+        assert_ne!(a.fingerprint(), b.fingerprint());
     }
 }
