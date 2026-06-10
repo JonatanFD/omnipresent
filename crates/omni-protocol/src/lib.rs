@@ -12,7 +12,7 @@ pub mod wire;
 
 // Flattened re-exports so callers write `omni_protocol::InputEvent` rather than
 // reaching into each submodule.
-pub use control::{ControlMessage, RejectReason};
+pub use control::{ControlMessage, RejectReason, ScreenSize};
 pub use ids::{Fingerprint, MachineId, PeerId, SessionId};
 pub use input::{Action, InputEvent, KeyCode, Modifiers, MouseButton, MouseDelta, ScrollDelta};
 pub use wire::{CodecError, Message, decode, encode};
