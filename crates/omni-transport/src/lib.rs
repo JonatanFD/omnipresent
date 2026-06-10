@@ -24,6 +24,8 @@ mod tls;
 pub use channel::{LoopbackChannel, SecureChannel};
 pub use endpoint::Endpoint;
 pub use policy::{HandshakePolicy, PolicyViolation};
-pub use quic::{ControlStream, QuicConnection, QuicEndpoint, QuicError};
+pub use quic::{
+    ControlReceiver, ControlSender, ControlStream, QuicConnection, QuicEndpoint, QuicError,
+};
 pub use tls::ALPN;
 pub use transport::{Transport, TransportError};

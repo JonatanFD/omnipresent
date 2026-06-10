@@ -51,6 +51,12 @@ impl<C: SecureChannel> Transport<C> {
         &self.channel
     }
 
+    /// Mutable access to the channel, for adapter-specific operations (e.g.
+    /// the QUIC adapter's async receive).
+    pub fn channel_mut(&mut self) -> &mut C {
+        &mut self.channel
+    }
+
     /// Encodes a message and sends it as one datagram.
     pub fn send(&mut self, message: &Message) -> Result<(), TransportError<C::Error>> {
         let payload = encode(message).map_err(TransportError::Codec)?;

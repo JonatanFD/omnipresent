@@ -407,6 +407,19 @@ impl InputSink for LinuxSink {
             }
         }
     }
+
+    fn warp(&mut self, x: i32, y: i32) -> Result<(), Self::Error> {
+        // A relative-only device cannot position absolutely: slam the cursor
+        // into the top-left corner, then step to the requested spot.
+        self.emit(&[
+            evdev::InputEvent::new(EventType::RELATIVE.0, RelativeAxisCode::REL_X.0, -65535),
+            evdev::InputEvent::new(EventType::RELATIVE.0, RelativeAxisCode::REL_Y.0, -65535),
+        ])?;
+        self.emit(&[
+            evdev::InputEvent::new(EventType::RELATIVE.0, RelativeAxisCode::REL_X.0, x),
+            evdev::InputEvent::new(EventType::RELATIVE.0, RelativeAxisCode::REL_Y.0, y),
+        ])
+    }
 }
 
 /// Platform-neutral aliases the Runtime wires against.

@@ -41,6 +41,10 @@ pub enum ControlMessage {
     Reject { reason: RejectReason },
     /// Either side ends an established session.
     Disconnect { session: SessionId },
+    /// Place the cursor at an absolute position on the receiver's screen —
+    /// sent on edge crossings so the cursor appears exactly where it entered.
+    /// Reliable (control stream), unlike the relative motion datagrams.
+    CursorWarp { session: SessionId, x: i32, y: i32 },
     /// Keep-alive so each side can detect a silently dropped peer.
     Heartbeat { session: SessionId },
 }

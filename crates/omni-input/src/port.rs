@@ -30,4 +30,11 @@ pub trait InputSink {
 
     /// Synthesizes one event into the local OS as if it came from real hardware.
     fn inject(&mut self, event: InputEvent) -> Result<(), Self::Error>;
+
+    /// Moves the local cursor to an absolute screen position, used when the
+    /// cursor enters this machine on an edge crossing. Sinks that cannot
+    /// position absolutely approximate or ignore it.
+    fn warp(&mut self, _x: i32, _y: i32) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
