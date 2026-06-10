@@ -8,6 +8,7 @@
 
 pub mod config;
 pub mod daemon;
+pub mod doctor;
 pub mod identity;
 pub mod ipc;
 pub mod ratelimit;

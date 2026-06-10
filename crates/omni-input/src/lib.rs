@@ -10,6 +10,7 @@
 //! [`platform`], with its source/sink under the common names `OsSource` and
 //! `OsSink`.
 
+pub mod diag;
 pub mod memory;
 pub mod port;
 

@@ -97,6 +97,8 @@ struct Shared {
     local_fingerprint: Fingerprint,
     local_screen: Screen,
     port: u16,
+    /// Whether the capture thread is alive (false = target-only).
+    capturing: std::sync::atomic::AtomicBool,
     shutdown: tokio::sync::Notify,
 }
 
@@ -185,6 +187,7 @@ pub fn run() -> Result<(), DaemonError> {
             local_fingerprint,
             local_screen,
             port: config.port(),
+            capturing: std::sync::atomic::AtomicBool::new(false),
             shutdown: tokio::sync::Notify::new(),
         });
         rebuild_layout(&mut shared.lock(), &shared);
@@ -193,6 +196,9 @@ pub fn run() -> Result<(), DaemonError> {
         // accessibility yet) still works as a target.
         match OsSource::new() {
             Ok(source) => {
+                shared
+                    .capturing
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 let capture_shared = shared.clone();
                 std::thread::Builder::new()
                     .name("omni-capture".into())
@@ -339,6 +345,9 @@ fn run_capture(shared: Arc<Shared>, mut source: OsSource, suppress_rx: watch::Re
             Ok(Some(event)) => route_captured(&shared, event),
             Ok(None) => std::thread::sleep(CAPTURE_IDLE),
             Err(e) => {
+                shared
+                    .capturing
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
                 tracing::error!(%e, "input capture stopped");
                 return;
             }
@@ -878,6 +887,7 @@ fn status(shared: &Arc<Shared>) -> StatusInfo {
     StatusInfo {
         fingerprint: shared.local_fingerprint.to_string(),
         port: shared.port,
+        capturing: shared.capturing.load(std::sync::atomic::Ordering::Relaxed),
         sessions: state
             .links
             .values()

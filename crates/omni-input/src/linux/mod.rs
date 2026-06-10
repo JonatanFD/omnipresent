@@ -426,6 +426,81 @@ impl InputSink for LinuxSink {
 pub type OsSource = LinuxSource;
 pub type OsSink = LinuxSink;
 
+/// Reports whether the OS permissions capture and injection need are granted:
+/// readable keyboards/mice in /dev/input, and a writable /dev/uinput.
+pub fn diagnose() -> Vec<crate::diag::Check> {
+    use crate::diag::Check;
+    let mut checks = Vec::new();
+
+    // Capture: evdev::enumerate only yields devices we could open, so compare
+    // against what /dev/input actually contains to tell "no permission" from
+    // "no hardware".
+    let present = std::fs::read_dir("/dev/input")
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().starts_with("event"))
+                .count()
+        })
+        .unwrap_or(0);
+    let mut keyboards = 0;
+    let mut mice = 0;
+    for (_path, device) in evdev::enumerate() {
+        if device.name() == Some(VIRTUAL_DEVICE_NAME) {
+            continue;
+        }
+        if is_keyboard(&device) {
+            keyboards += 1;
+        }
+        if is_mouse(&device) {
+            mice += 1;
+        }
+    }
+    checks.push(if keyboards + mice > 0 {
+        Check::ok(
+            "input device access (capture)",
+            format!("{keyboards} keyboard(s) and {mice} mouse/mice readable in /dev/input"),
+        )
+    } else if present > 0 {
+        Check::failed(
+            "input device access (capture)",
+            format!(
+                "{present} device(s) in /dev/input but none readable — add the user \
+                 to the `input` group (`sudo usermod -aG input $USER`), then log \
+                 out and back in"
+            ),
+        )
+    } else {
+        Check::failed(
+            "input device access (capture)",
+            "no devices in /dev/input — no input hardware visible to this system",
+        )
+    });
+
+    // Injection: opening /dev/uinput for writing is exactly what the sink does.
+    checks.push(
+        match std::fs::OpenOptions::new().write(true).open("/dev/uinput") {
+            Ok(_) => Check::ok("uinput access (injection)", "/dev/uinput is writable"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Check::failed(
+                "uinput access (injection)",
+                "/dev/uinput does not exist — load the module (`sudo modprobe uinput`) \
+             and persist it (`echo uinput | sudo tee /etc/modules-load.d/uinput.conf`)",
+            ),
+            Err(e) => Check::failed(
+                "uinput access (injection)",
+                format!(
+                    "/dev/uinput is not writable ({e}) — give the `input` group access: \
+                 `echo 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"' | sudo tee \
+                 /etc/udev/rules.d/99-omni.rules && sudo udevadm control --reload-rules \
+                 && sudo udevadm trigger`"
+                ),
+            ),
+        },
+    );
+
+    checks
+}
+
 /// The screen size is not discoverable from evdev (it belongs to the display
 /// server); the Runtime falls back to configuration.
 pub fn primary_screen_size() -> Option<(u32, u32)> {

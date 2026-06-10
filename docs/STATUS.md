@@ -5,7 +5,7 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-10._
+_Last updated: 2026-06-10 (doctor added after first live-pair testing)._
 
 ## Where we are
 
@@ -33,10 +33,10 @@ and `cargo test` (95 tests).
 | `omni-topology`  | **Implemented** | Virtual desktop layout, edge crossings, and the `LayoutStore` port. 13 tests. |
 | `omni-security`  | **Implemented** | Allowlist + TOFU trust policy, `TrustStore`/`CertProvider` ports, self-signed identity generation. 15 tests. |
 | `omni-session`   | **Implemented** | Session lifecycle, dynamic roles, active-target routing, `SessionEvents` port. 12 tests. |
-| `omni-input`     | **Implemented** | Ports, in-memory adapters, and the real OS adapters: macOS (CGEvent tap + post) and Linux (evdev + uinput). 13 tests. |
+| `omni-input`     | **Implemented** | Ports, in-memory adapters, permission diagnostics, and the real OS adapters: macOS (CGEvent tap + post) and Linux (evdev + uinput). 13 tests. |
 | `omni-transport` | **Implemented** | `SecureChannel` port, framing, loopback channel, and the real QUIC adapter (quinn + rustls, mTLS, TOFU verifiers, datagrams + control stream). 12 tests. |
-| `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, IPC types, and the composition root that runs the pipelines. 14 tests. |
-| `omni-cli`       | **Implemented** | The full `omni` binary: start/stop/status, connect/disconnect, accept/reject, peers (+ remove), uninstall, over the daemon's Unix socket. |
+| `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, IPC types, doctor checks, and the composition root that runs the pipelines. 16 tests. |
+| `omni-cli`       | **Implemented** | The full `omni` binary: start/stop/status, doctor, connect/disconnect, accept/reject, peers (+ remove), uninstall, over the daemon's Unix socket. |
 
 ### What `omni-protocol` provides
 
@@ -150,7 +150,11 @@ and `cargo test` (95 tests).
   session (default 2 000 events/s, burst 4 000) so a misbehaving peer cannot
   flood the local OS.
 - **IPC types** (`ipc`): the JSON-lines request/response protocol the CLI
-  speaks over the Unix socket (status, connect, accept, peers, ...).
+  speaks over the Unix socket (status, connect, accept, peers, ...). Status
+  reports whether input capture is live, so a target-only daemon is visible.
+- **Doctor** (`doctor`): environment checks behind `omni doctor` — the
+  platform's input-permission diagnostics (Accessibility on macOS; evdev and
+  uinput access on Linux) plus screen-size and state-directory checks.
 - **The daemon** (`daemon`): the composition root. A capture thread polls the
   OS input source and advances the virtual cursor through Topology; an edge
   crossing flips Session's active target, suppresses local input, and warps
@@ -167,10 +171,11 @@ The complete `omni` surface from the README: `start` (spawns the daemon
 detached via a hidden `daemon` subcommand and waits for the socket), `stop`,
 `status` (fingerprint, port, sessions with the input-here marker, pending
 requests), `connect` / `disconnect <host>`, `accept` / `reject
-<host|fingerprint>`, `peers` / `peers remove <host>`, and `uninstall` (stops
-the daemon, removes the config dir, deletes the binary). Each command is one
-JSON line to the daemon and one line back; errors land on stderr with a
-non-zero exit.
+<host|fingerprint>`, `peers` / `peers remove <host>`, `doctor` (prints every permission/environment
+check and the daemon's own capture state, non-zero exit when something is
+unmet), and `uninstall` (stops the daemon, removes the config dir, deletes
+the binary). Each command is one JSON line to the daemon and one line back;
+errors land on stderr with a non-zero exit.
 
 ## Tooling & dependencies
 

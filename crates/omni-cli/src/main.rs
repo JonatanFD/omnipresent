@@ -45,6 +45,8 @@ enum Command {
         #[command(subcommand)]
         action: Option<PeersAction>,
     },
+    /// Check that the OS permissions and environment the daemon needs are in place.
+    Doctor,
     /// Stop the daemon and remove all config, certs, and peer data.
     Uninstall,
     /// Run the daemon in the foreground (what `omni start` launches).
@@ -120,6 +122,7 @@ fn main() -> ExitCode {
         Command::Peers {
             action: Some(PeersAction::Remove { host }),
         } => simple(Request::RemovePeer { selector: host }, "removed"),
+        Command::Doctor => doctor(),
         Command::Uninstall => uninstall(),
     }
 }
@@ -173,6 +176,9 @@ fn request(req: Request) -> Result<Response, String> {
 fn print_status(status: &StatusInfo) {
     println!("daemon: running (udp port {})", status.port);
     println!("fingerprint: {}", status.fingerprint);
+    if !status.capturing {
+        println!("input capture: unavailable — target only (run `omni doctor`)");
+    }
     if status.sessions.is_empty() {
         println!("sessions: none");
     } else {
@@ -201,6 +207,48 @@ fn print_status(status: &StatusInfo) {
 fn short(fingerprint: &str) -> String {
     let head: String = fingerprint.chars().take(16).collect();
     format!("{head}…")
+}
+
+/// Prints every environment check, then what the daemon itself reports.
+/// Exits non-zero if any requirement is unmet.
+fn doctor() -> ExitCode {
+    let paths = match Paths::resolve() {
+        Ok(paths) => paths,
+        Err(e) => {
+            eprintln!("omni: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let checks = omni_runtime::doctor::run_checks(&paths);
+    let mut all_ok = true;
+    for check in &checks {
+        let mark = if check.ok { "ok " } else { "FAIL" };
+        println!("[{mark}] {} — {}", check.name, check.detail);
+        all_ok &= check.ok;
+    }
+
+    // The daemon's own view matters too: it may have been started from a
+    // context with different permissions than this shell.
+    match request(Request::Status) {
+        Ok(Response::Status(status)) => {
+            if status.capturing {
+                println!("[ok ] daemon — running, input capture active");
+            } else {
+                println!(
+                    "[FAIL] daemon — running but capture is off (target only);                      fix the permission above, then `omni stop && omni start`                      from this terminal"
+                );
+                all_ok = false;
+            }
+        }
+        _ => println!("[ -- ] daemon — not running (`omni start`)"),
+    }
+
+    if all_ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 fn start() -> ExitCode {

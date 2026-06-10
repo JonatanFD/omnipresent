@@ -27,6 +27,7 @@ All interaction happens through the `omni` binary.
 omni start          # start the background daemon
 omni stop           # stop the running daemon
 omni status         # show whether the daemon is running and list active connections
+omni doctor         # check that the OS permissions and environment the daemon needs are in place
 ```
 
 ## Connections
