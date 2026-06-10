@@ -53,6 +53,39 @@ impl std::fmt::Display for MacosInputError {
 
 impl std::error::Error for MacosInputError {}
 
+// From ApplicationServices/HIServices: whether this process may use the
+// accessibility APIs — the permission gating both the event tap (capture)
+// and CGEventPost (injection).
+#[link(name = "ApplicationServices", kind = "framework")]
+unsafe extern "C" {
+    fn AXIsProcessTrusted() -> u8;
+}
+
+/// Reports whether the OS permissions capture and injection need are granted.
+///
+/// The verdict is for *this process*. macOS attributes the Accessibility
+/// permission to the responsible app — for a CLI that is the terminal it runs
+/// from — so run this from the same terminal you run `omni start` from.
+pub fn diagnose() -> Vec<crate::diag::Check> {
+    use crate::diag::Check;
+    let trusted = unsafe { AXIsProcessTrusted() } != 0;
+    let check = if trusted {
+        Check::ok(
+            "accessibility permission",
+            "granted — capture and injection available",
+        )
+    } else {
+        Check::failed(
+            "accessibility permission",
+            "not granted — System Settings → Privacy & Security → Accessibility: \
+             add the terminal you run `omni start` from. Rebuilding the binary \
+             revokes the grant; remove and re-add it after a rebuild, then \
+             restart the daemon",
+        )
+    };
+    vec![check]
+}
+
 /// The size of the main display in global display coordinates — the geometry
 /// Topology builds the virtual desktop from.
 pub fn primary_screen_size() -> Option<(u32, u32)> {

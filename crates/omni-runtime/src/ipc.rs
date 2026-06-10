@@ -42,6 +42,10 @@ pub struct StatusInfo {
     pub fingerprint: String,
     /// The UDP port the daemon listens on.
     pub port: u16,
+    /// Whether local input capture is running (false = target-only: the OS
+    /// permission for capture is missing or the capture thread died).
+    #[serde(default)]
+    pub capturing: bool,
     /// Active sessions.
     pub sessions: Vec<SessionInfo>,
     /// Incoming requests awaiting `omni accept` / `omni reject`.
@@ -102,6 +106,7 @@ mod tests {
         let response = Response::Status(StatusInfo {
             fingerprint: "ab".repeat(32),
             port: 4733,
+            capturing: true,
             sessions: vec![SessionInfo {
                 host: "10.0.0.2".into(),
                 fingerprint: "cd".repeat(32),
