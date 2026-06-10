@@ -41,6 +41,12 @@ dirs = "6.0"
 rand = "0.10"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# macOS input: CGEvent capture (event tap) and injection.
+core-graphics = { version = "0.25", features = ["highsierra"] }
+core-foundation = "0.10"
+# Linux input: evdev capture and uinput injection.
+evdev = "0.13"
+
 
 # Internal crates.
 omni-protocol = { path = "crates/omni-protocol" }

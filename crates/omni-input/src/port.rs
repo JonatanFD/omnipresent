@@ -13,6 +13,13 @@ pub trait InputSource {
     /// Returns the next captured event, or `None` if none is available right now.
     /// Non-blocking: the event loop polls it repeatedly.
     fn poll(&mut self) -> Result<Option<InputEvent>, Self::Error>;
+
+    /// Tells the source whether its events are currently routed to a remote
+    /// machine. While suppressed, captured events keep flowing through `poll`
+    /// but are withheld from the local OS, so input never acts on two machines
+    /// at once. Sources with nothing to withhold (like the in-memory test
+    /// source) ignore this.
+    fn set_suppressed(&mut self, _suppressed: bool) {}
 }
 
 /// Injects input events into the local OS, used when this machine is the Target

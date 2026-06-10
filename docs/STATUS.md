@@ -32,7 +32,7 @@ and `cargo test`.
 | `omni-topology`  | **Implemented** | Virtual desktop layout, edge crossings, and the `LayoutStore` port. 13 tests. |
 | `omni-security`  | **Implemented** | Allowlist + TOFU trust policy, `TrustStore`/`CertProvider` ports, self-signed identity generation. 15 tests. |
 | `omni-session`   | **Implemented** | Session lifecycle, dynamic roles, active-target routing, `SessionEvents` port. 12 tests. |
-| `omni-input`     | **Ports + test adapter** | `InputSource`/`InputSink` ports and in-memory adapters. 5 tests. Real OS adapters pending. |
+| `omni-input`     | **Implemented** | Ports, in-memory adapters, and the real OS adapters: macOS (CGEvent tap + post) and Linux (evdev + uinput). 13 tests. |
 | `omni-transport` | **Implemented** | `SecureChannel` port, framing, loopback channel, and the real QUIC adapter (quinn + rustls, mTLS, TOFU verifiers, datagrams + control stream). 12 tests. |
 | `omni-runtime`   | Scaffold      | Crate + responsibility doc only.                                             |
 | `omni-cli`       | Scaffold      | `omni` binary prints "not yet implemented".                                  |
@@ -98,8 +98,21 @@ and `cargo test`.
 - **In-memory adapters** (`memory`): `QueuedSource` replays a scripted sequence
   of events; `RecordingSink` records what is injected. Together they stand in for
   hardware and exercise the capture→send and receive→inject pipelines.
-- **Pending:** the real per-OS adapters (macOS CGEvent/IOKit, Linux evdev/uinput)
-  — see "What's next".
+- **Suppression**: `InputSource::set_suppressed` — while input is routed to a
+  remote machine the source still reports events but withholds them from the
+  local OS, so input never acts on two machines at once.
+- **macOS adapters** (`macos`): `MacosSource` captures through a CGEvent tap on
+  a dedicated run-loop thread (suppression drops the event before the OS acts;
+  the tap re-enables itself if the OS disables it) and `MacosSink` injects with
+  `CGEventPost`, stamping its events so the tap never re-captures them. Needs
+  the Accessibility permission — never root. A `kVK ↔ HID` keymap covers the
+  full ANSI layout.
+- **Linux adapters** (`linux`): `LinuxSource` reads keyboards and mice from
+  `/dev/input` (one thread per device; suppression = `EVIOCGRAB`), `LinuxSink`
+  injects through a uinput virtual device that the capture side knows to skip.
+  Needs only `input`-group membership — never root. A `KEY_* ↔ HID` keymap
+  mirrors the macOS one. (Compile-checked against a Linux target; needs live
+  hardware to exercise.)
 
 ### What `omni-transport` provides
 
@@ -153,10 +166,6 @@ below without stubbing the layers above. Suggested sequence:
 
 Cross-cutting, can come at any point:
 
-- **`omni-input` real OS adapters** — macOS (CGEvent/IOKit) and Linux
-  (evdev/uinput) implementations of `InputSource`/`InputSink`, with the
-  least-privilege model from `CLAUDE.md`. Deferred because they need platform
-  APIs and live hardware to exercise.
 - **CI**: a GitHub Actions workflow running fmt + clippy + test (currently these
   run only locally).
 
