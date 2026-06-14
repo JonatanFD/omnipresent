@@ -132,6 +132,10 @@ impl InputSink for WindowsSink {
         match event {
             InputEvent::Key { code, action, .. } => self.inject_key(code, action),
             InputEvent::Motion(delta) => self.inject_mouse(MOUSEEVENTF_MOVE, 0, delta.dx, delta.dy),
+            // Absolute placement from a remote controller. SetCursorPos drives a
+            // drag as well as a move (a held button persists) and arrives
+            // flagged "injected", so the capture hook skips it.
+            InputEvent::Pointer { x, y } => self.warp(x, y),
             InputEvent::Button { button, action } => self.inject_button(button, action),
             InputEvent::Scroll(delta) => self.inject_scroll(delta),
         }

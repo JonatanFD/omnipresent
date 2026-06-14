@@ -371,6 +371,10 @@ impl InputSink for LinuxSink {
                 evdev::InputEvent::new(EventType::RELATIVE.0, RelativeAxisCode::REL_X.0, delta.dx),
                 evdev::InputEvent::new(EventType::RELATIVE.0, RelativeAxisCode::REL_Y.0, delta.dy),
             ]),
+            // Absolute placement from a remote controller. A uinput relative
+            // device cannot position directly, so reuse the same corner-anchored
+            // stepping as an edge-crossing warp.
+            InputEvent::Pointer { x, y } => self.warp(x, y),
             InputEvent::Button { button, action } => {
                 let Some(code) = evdev_from_button(button) else {
                     return Ok(());

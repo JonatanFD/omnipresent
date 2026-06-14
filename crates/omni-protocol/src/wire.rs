@@ -75,10 +75,14 @@ mod tests {
     }
 
     #[test]
-    fn input_motion_and_button_round_trip() {
+    fn input_motion_pointer_and_button_round_trip() {
         round_trip(Message::Input {
             session: SessionId::new(1),
             event: InputEvent::Motion(MouseDelta::new(-10, 4)),
+        });
+        round_trip(Message::Input {
+            session: SessionId::new(1),
+            event: InputEvent::Pointer { x: -1920, y: 1080 },
         });
         round_trip(Message::Input {
             session: SessionId::new(1),
