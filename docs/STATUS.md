@@ -5,8 +5,10 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-14 (global cursor hiding on suppression, true Linux
-cursor-position query, and opt-in `omni-clipboard` text/image sharing over QUIC)._
+_Last updated: 2026-06-14 (cursor-visibility fixes from the first two-machine
+run: the macOS sink warps the cursor so a remote-driven move stays drawn, and
+the Windows source no longer hides the local cursor with the OS-global,
+crash-persistent `SetSystemCursor`)._
 
 ## Where we are
 
@@ -43,7 +45,7 @@ and `cargo test` (98 tests), including on Windows.
 | `omni-topology`  | **Implemented** | Virtual desktop layout, edge crossings, and the `LayoutStore` port. 13 tests. |
 | `omni-security`  | **Implemented** | Allowlist + TOFU trust policy, `TrustStore`/`CertProvider` ports, self-signed identity generation. 15 tests. |
 | `omni-session`   | **Implemented** | Session lifecycle, dynamic roles, active-target routing, `SessionEvents` port. 12 tests. |
-| `omni-input`     | **Implemented** | Ports, in-memory adapters, permission diagnostics, and the real OS adapters: macOS (CGEvent tap + post), Linux (evdev + uinput), and Windows (low-level hooks + SendInput). Global cursor **hiding** on suppression (macOS `CGDisplayHideCursor`, Windows `SetSystemCursor`, Linux X11 empty-cursor on the root window) and true Linux cursor-position query (`XQueryPointer`). 13 tests. |
+| `omni-input`     | **Implemented** | Ports, in-memory adapters, permission diagnostics, and the real OS adapters: macOS (CGEvent tap + post; the sink warps the cursor so a remote-driven move stays visible), Linux (evdev + uinput), and Windows (low-level hooks + SendInput; the local cursor is parked, not hidden). Cursor **hiding** on suppression where it is safe and self-restoring (macOS `CGDisplayHideCursor`, Linux X11 empty-cursor on the root window) and true Linux cursor-position query (`XQueryPointer`). 13 tests. |
 | `omni-clipboard` | **Implemented** | Opt-in clipboard sharing (text + images) over a ports-and-adapters design: `arboard` adapter, in-memory mock, echo-loop guard, strict opt-in toggle. 7 tests. |
 | `omni-transport` | **Implemented** | `SecureChannel` port, framing, loopback channel, and the real QUIC adapter (quinn + rustls, mTLS, TOFU verifiers, datagrams + control stream). 12 tests. |
 | `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, cross-platform IPC (Unix socket / Windows named pipe), heartbeats, configurable layout, opt-in clipboard sync over the control stream, doctor checks, and the composition root that runs the pipelines. 19 tests + a two-daemon integration test. |
@@ -120,9 +122,11 @@ and `cargo test` (98 tests), including on Windows.
 - **macOS adapters** (`macos`): `MacosSource` captures through a CGEvent tap on
   a dedicated run-loop thread (suppression drops the event before the OS acts;
   the tap re-enables itself if the OS disables it) and `MacosSink` injects with
-  `CGEventPost`, stamping its events so the tap never re-captures them. Needs
-  the Accessibility permission — never root. A `kVK ↔ HID` keymap covers the
-  full ANSI layout.
+  `CGEventPost`, stamping its events so the tap never re-captures them. Each
+  move also warps the cursor (`CGWarpMouseCursorPosition`) to the same spot,
+  because macOS otherwise blanks the cursor for purely synthesized motion;
+  that keeps the remote-driven cursor visible. Needs the Accessibility
+  permission — never root. A `kVK ↔ HID` keymap covers the full ANSI layout.
 - **Linux adapters** (`linux`): `LinuxSource` reads keyboards and mice from
   `/dev/input` (one thread per device; suppression = `EVIOCGRAB`), `LinuxSink`
   injects through a uinput virtual device that the capture side knows to skip.

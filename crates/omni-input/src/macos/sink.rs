@@ -14,6 +14,27 @@ use core_graphics::geometry::CGPoint;
 use omni_protocol::InputEvent;
 use omni_protocol::input::{Action, Modifiers, MouseButton, MouseDelta, ScrollDelta};
 
+// Posting a `MouseMoved` event repositions the cursor for applications, but
+// macOS will not keep the hardware cursor *drawn* for moves that come purely
+// from synthesized events with no physical device behind them — it blanks it.
+// Warping the cursor to the same spot forces it to be drawn there, and
+// re-associating cancels the brief post-warp suppression so a controlled
+// machine stays responsive. This is what keeps the remote cursor visible.
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGWarpMouseCursorPosition(point: CGPoint) -> i32;
+    fn CGAssociateMouseAndMouseCursorPosition(connected: i32) -> i32;
+}
+
+/// Forces the visible cursor to `position` so a synthesized move is actually
+/// drawn there, then re-associates so the cursor keeps tracking.
+fn keep_cursor_visible(position: DisplayPoint) {
+    unsafe {
+        CGWarpMouseCursorPosition(position.into());
+        CGAssociateMouseAndMouseCursorPosition(1);
+    }
+}
+
 /// Injects remote input into the local OS. The production `InputSink`.
 ///
 /// Holds only plain state (which buttons are down, the last key modifiers), so
@@ -85,6 +106,7 @@ impl MacosSink {
             .map_err(|_| MacosInputError::EventCreation)?;
         event.set_flags(flags_from_modifiers(self.modifiers));
         post(&event);
+        keep_cursor_visible(position);
         Ok(())
     }
 
@@ -168,6 +190,7 @@ impl InputSink for MacosSink {
         )
         .map_err(|_| MacosInputError::EventCreation)?;
         post(&event);
+        keep_cursor_visible(position);
         Ok(())
     }
 }
