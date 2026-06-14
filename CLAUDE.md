@@ -55,6 +55,18 @@ omni peers                  # list all known peers and their status (connected /
 omni peers remove <host>    # remove a peer from the trusted list
 ```
 
+## Layout
+
+By default a peer you dial sits past your right edge, and a peer that dials you
+sits past your left edge. Override that per host:
+
+```
+omni layout                      # list where each peer sits in the virtual desktop
+omni layout <host> <edge>        # place a peer past left | right | top | bottom
+```
+
+The placement is saved, so it also applies the next time that peer connects.
+
 ## Uninstall
 
 ```
@@ -67,7 +79,7 @@ omni uninstall   # stop the daemon, remove all config, certs, and peer data, the
 
 - Keyboard and mouse sharing across machines
 - Seamless cursor transition between screens
-- Cross-platform: macOS and Linux at minimum
+- Cross-platform: macOS, Linux, and Windows
 - No audio redirection
 
 # Technical constraints
