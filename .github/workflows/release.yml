@@ -20,9 +20,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-13 # Intel runner: native x86_64
+          # Both macOS targets build on the Apple-silicon runner: arm64 native,
+          # x86_64 cross-compiled (the Apple toolchain targets both). This avoids
+          # depending on the older Intel `macos-13` runner.
+          - os: macos-latest
             target: x86_64-apple-darwin
-          - os: macos-latest # Apple-silicon runner: native arm64
+          - os: macos-latest
             target: aarch64-apple-darwin
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
