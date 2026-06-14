@@ -107,7 +107,8 @@ struct Shared {
     state: Mutex<State>,
     trust: Arc<TrustState>,
     endpoint: QuicEndpoint,
-    sink: Mutex<OsSink>,
+    /// `None` when the OS denied injection access (target-only without source).
+    sink: Option<Mutex<OsSink>>,
     /// `true` while local input is routed to a remote peer.
     suppress: watch::Sender<bool>,
     local_machine: MachineId,
@@ -198,7 +199,13 @@ pub fn run_with_paths(paths: Paths) -> Result<(), DaemonError> {
         )
         .map_err(|e| fail("QUIC endpoint", e))?;
 
-        let sink = OsSink::new().map_err(|e| fail("input injection", e))?;
+        let sink = match OsSink::new() {
+            Ok(s) => Some(Mutex::new(s)),
+            Err(e) => {
+                tracing::warn!(%e, "input injection unavailable — running as relay only");
+                None
+            }
+        };
         let (suppress_tx, suppress_rx) = watch::channel(false);
 
         let shared = Arc::new(Shared {
@@ -212,7 +219,7 @@ pub fn run_with_paths(paths: Paths) -> Result<(), DaemonError> {
             }),
             trust,
             endpoint,
-            sink: Mutex::new(sink),
+            sink,
             suppress: suppress_tx,
             local_machine,
             local_fingerprint,
@@ -484,7 +491,8 @@ fn place_cursor_after_crossing(state: &State, shared: &Shared, crossing: Crossin
     let x = crossing.entry.x as i32;
     let y = crossing.entry.y as i32;
     if crossing.peer == shared.local_machine {
-        if let Ok(mut sink) = shared.sink.lock()
+        if let Some(ref sm) = shared.sink
+            && let Ok(mut sink) = sm.lock()
             && let Err(e) = sink.warp(x, y)
         {
             tracing::warn!(%e, "could not place the local cursor");
@@ -879,7 +887,8 @@ async fn run_peer(
 }
 
 fn inject(shared: &Shared, event: InputEvent) {
-    if let Ok(mut sink) = shared.sink.lock()
+    if let Some(ref sm) = shared.sink
+        && let Ok(mut sink) = sm.lock()
         && let Err(e) = sink.inject(event)
     {
         tracing::warn!(%e, "could not inject input");
@@ -887,7 +896,8 @@ fn inject(shared: &Shared, event: InputEvent) {
 }
 
 fn warp(shared: &Shared, x: i32, y: i32) {
-    if let Ok(mut sink) = shared.sink.lock()
+    if let Some(ref sm) = shared.sink
+        && let Ok(mut sink) = sm.lock()
         && let Err(e) = sink.warp(x, y)
     {
         tracing::warn!(%e, "could not warp cursor");
