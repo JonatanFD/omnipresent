@@ -47,6 +47,28 @@ pub fn fingerprint_hex(fingerprint: Fingerprint) -> String {
     fingerprint.to_string()
 }
 
+/// Collapses duplicate host pins an earlier `accept` could leave behind: a host
+/// maps to a single certificate, so only the most recently accepted record for
+/// each host is kept (records were always appended, so the last one wins).
+/// Host-less pins are never duplicates by host and are all kept. Returns whether
+/// anything was dropped.
+fn dedup_host_pins(peers: &mut Vec<PeerRecord>) -> bool {
+    let before = peers.len();
+    let mut seen = std::collections::HashSet::new();
+    // Walk newest-first so the last record for a host wins, then restore order.
+    let mut kept: Vec<PeerRecord> = peers
+        .drain(..)
+        .rev()
+        .filter(|r| match &r.host {
+            Some(host) => seen.insert(host.clone()),
+            None => true,
+        })
+        .collect();
+    kept.reverse();
+    *peers = kept;
+    peers.len() != before
+}
+
 fn parse_fingerprint(hex: &str) -> Option<Fingerprint> {
     if hex.len() != 64 {
         return None;
@@ -86,17 +108,25 @@ pub struct TrustState {
 }
 
 impl TrustState {
-    /// Loads the trust file, or starts empty if it does not exist.
+    /// Loads the trust file, or starts empty if it does not exist. Collapses any
+    /// duplicate host pins an earlier version could have left behind, and
+    /// rewrites the file if it changed, so a stale pin can no longer shadow the
+    /// current one.
     pub fn load(path: PathBuf) -> Result<Self, TrustError> {
-        let inner = match std::fs::read(&path) {
+        let mut inner: TrustFile = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(TrustError::Parse)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => TrustFile::default(),
             Err(e) => return Err(TrustError::Io(e)),
         };
-        Ok(Self {
+        let state = Self {
             path,
-            inner: Mutex::new(inner),
-        })
+            inner: Mutex::new(TrustFile::default()),
+        };
+        if dedup_host_pins(&mut inner.peers) {
+            state.save(&inner)?;
+        }
+        *state.inner.lock().expect("trust state lock") = inner;
+        Ok(state)
     }
 
     fn save(&self, file: &TrustFile) -> Result<(), TrustError> {
@@ -123,9 +153,19 @@ impl TrustState {
 
     /// Records the user's acceptance of a peer (TOFU pin + allowlist), with
     /// the host we know it by, if any.
+    ///
+    /// A host pins exactly one certificate. When a host is given, any other
+    /// record that claimed it with a different fingerprint is dropped, so a
+    /// rotated certificate the user just accepted replaces the old pin instead
+    /// of being shadowed by it (a stale pin would otherwise refuse the peer the
+    /// next time we dialed that host).
     pub fn accept(&self, fingerprint: Fingerprint, host: Option<&str>) -> Result<(), TrustError> {
         let mut file = self.inner.lock().expect("trust state lock");
         let hex = fingerprint_hex(fingerprint);
+        if let Some(host) = host {
+            file.peers
+                .retain(|r| r.fingerprint == hex || r.host.as_deref() != Some(host));
+        }
         if let Some(record) = file.peers.iter_mut().find(|r| r.fingerprint == hex) {
             if let Some(host) = host {
                 record.host = Some(host.to_string());
@@ -281,6 +321,57 @@ mod tests {
         assert!(state.authorize_server("10.0.0.3", fp(4)).is_err());
         // A host we never pinned is first-use: allowed, pinned after success.
         assert!(state.authorize_server("10.0.0.9", fp(9)).is_ok());
+    }
+
+    #[test]
+    fn re_accepting_a_host_with_a_new_fingerprint_replaces_the_old_pin() {
+        let state = temp_state("rotate");
+        // First the host presents one certificate, then a different one (e.g.
+        // the peer was reinstalled). Accepting the new one must replace the pin.
+        state.accept(fp(10), Some("192.168.0.118")).unwrap();
+        state.accept(fp(11), Some("192.168.0.118")).unwrap();
+
+        // Exactly one pin for the host, and it is the new fingerprint — so a
+        // later dial of that host authorizes the new certificate, not the old.
+        assert_eq!(state.pinned_for_host("192.168.0.118"), Some(fp(11)));
+        assert!(state.authorize_server("192.168.0.118", fp(11)).is_ok());
+        assert!(state.authorize_server("192.168.0.118", fp(10)).is_err());
+        // The old certificate is no longer trusted at all.
+        assert!(!state.is_trusted(fp(10)));
+        assert!(state.is_trusted(fp(11)));
+        assert_eq!(state.peers().len(), 1);
+    }
+
+    #[test]
+    fn loading_collapses_duplicate_host_pins_keeping_the_newest() {
+        // A trust file an older buggy version could have written: two records
+        // for the same host, the stale one first. Loading must heal it so the
+        // stale pin no longer shadows the current one.
+        let dir = std::env::temp_dir().join(format!("omni-test-trust-dup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("trust.json");
+        let file = TrustFile {
+            peers: vec![
+                PeerRecord {
+                    host: Some("192.168.0.118".into()),
+                    fingerprint: fingerprint_hex(fp(20)),
+                },
+                PeerRecord {
+                    host: Some("192.168.0.118".into()),
+                    fingerprint: fingerprint_hex(fp(21)),
+                },
+            ],
+        };
+        std::fs::write(&path, serde_json::to_vec_pretty(&file).unwrap()).unwrap();
+
+        let state = TrustState::load(path.clone()).unwrap();
+
+        assert_eq!(state.peers().len(), 1);
+        assert_eq!(state.pinned_for_host("192.168.0.118"), Some(fp(21)));
+        // The heal is persisted, so a fresh load sees the collapsed file too.
+        let reloaded = TrustState::load(path).unwrap();
+        assert_eq!(reloaded.peers().len(), 1);
     }
 
     #[test]

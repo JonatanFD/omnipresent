@@ -670,7 +670,7 @@ async fn do_connect(shared: &Arc<Shared>, host_arg: &str) -> Result<(), String> 
         .endpoint
         .connect(addr, &host)
         .await
-        .map_err(|e| format!("could not connect to {host_arg}: {e}"))?;
+        .map_err(|e| connect_error(host_arg, &host, e))?;
     let fingerprint = connection.peer_fingerprint();
 
     let mut control = connection
@@ -759,6 +759,25 @@ async fn do_connect(shared: &Arc<Shared>, host_arg: &str) -> Result<(), String> 
         .await;
     });
     Ok(())
+}
+
+/// Turns a failed dial into a user-facing message, adding a recovery hint when
+/// the failure is the peer's certificate being refused — almost always because
+/// that host legitimately got a new certificate (reinstall, fresh config) and
+/// the old one is still pinned here under TOFU.
+fn connect_error(host_arg: &str, host: &str, e: omni_transport::QuicError) -> String {
+    let detail = e.to_string();
+    let looks_like_tofu = detail.contains("certificate") || detail.contains("handshake");
+    if looks_like_tofu {
+        format!(
+            "could not connect to {host_arg}: {detail}\n\
+             hint: if {host} was reinstalled or its identity reset, its certificate \
+             changed; run `omni peers remove {host}` here, then connect again to trust \
+             the new one"
+        )
+    } else {
+        format!("could not connect to {host_arg}: {detail}")
+    }
 }
 
 /// `host[:port]` → (host-for-TOFU, socket address). A bare IPv6 literal
