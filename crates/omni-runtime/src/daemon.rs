@@ -397,8 +397,20 @@ fn route_captured(shared: &Arc<Shared>, event: InputEvent) {
             match event {
                 InputEvent::Motion(delta) => {
                     if !advance_cursor(&mut state, shared, delta) {
-                        // Still on the remote screen: forward the motion.
-                        forward_to(&state, peer, InputEvent::Motion(delta));
+                        // Still on the remote screen: send the cursor's absolute
+                        // position on that screen, not the raw delta. The
+                        // virtual desktop already mapped it into the peer's
+                        // pixels using both machines' sizes, so the peer's cursor
+                        // lands exactly here with no drift.
+                        let point = state.cursor.position;
+                        forward_to(
+                            &state,
+                            peer,
+                            InputEvent::Pointer {
+                                x: point.x as i32,
+                                y: point.y as i32,
+                            },
+                        );
                     }
                 }
                 other => forward_to(&state, peer, other),

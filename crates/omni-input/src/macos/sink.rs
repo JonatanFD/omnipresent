@@ -56,6 +56,22 @@ impl MacosSink {
 
     fn inject_motion(&mut self, delta: MouseDelta) -> Result<(), MacosInputError> {
         let position = clamp_to_display(cursor_position()?.offset(delta));
+        self.move_to(position)
+    }
+
+    /// Places the cursor at an absolute position on this screen. This is what a
+    /// remote controller drives — no read-back of the local cursor, so there is
+    /// nothing to drift.
+    fn inject_pointer(&mut self, x: i32, y: i32) -> Result<(), MacosInputError> {
+        let position = clamp_to_display(DisplayPoint {
+            x: x as f64,
+            y: y as f64,
+        });
+        self.move_to(position)
+    }
+
+    /// Posts a move (or a drag, if a button is held) to `position`.
+    fn move_to(&mut self, position: DisplayPoint) -> Result<(), MacosInputError> {
         let (event_type, button) = if self.held_buttons & 1 != 0 {
             (CGEventType::LeftMouseDragged, CGMouseButton::Left)
         } else if self.held_buttons & 2 != 0 {
@@ -133,6 +149,7 @@ impl InputSink for MacosSink {
                 modifiers,
             } => self.inject_key(code, action, modifiers),
             InputEvent::Motion(delta) => self.inject_motion(delta),
+            InputEvent::Pointer { x, y } => self.inject_pointer(x, y),
             InputEvent::Button { button, action } => self.inject_button(button, action),
             InputEvent::Scroll(delta) => self.inject_scroll(delta),
         }

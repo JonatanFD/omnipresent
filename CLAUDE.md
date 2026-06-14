@@ -67,6 +67,12 @@ omni layout <host> <edge>        # place a peer past left | right | top | bottom
 
 The placement is saved, so it also applies the next time that peer connects.
 
+## Update
+
+```
+omni update         # download and install the latest release, then restart the daemon
+```
+
 ## Uninstall
 
 ```

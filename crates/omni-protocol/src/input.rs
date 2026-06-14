@@ -16,8 +16,15 @@ pub enum InputEvent {
         action: Action,
         modifiers: Modifiers,
     },
-    /// The mouse moved by a relative amount.
+    /// The mouse moved by a relative amount. Used between the OS and the
+    /// virtual-desktop model; not what travels to a remote target.
     Motion(MouseDelta),
+    /// The pointer is at this absolute position on the target's screen, in that
+    /// screen's pixels. This is what the controller sends while driving a remote
+    /// machine: the controller maps the cursor into the peer's screen using both
+    /// machines' sizes (the virtual desktop), so the two cursors can never drift
+    /// apart the way accumulated relative deltas would.
+    Pointer { x: i32, y: i32 },
     /// A mouse button was pressed or released.
     Button { button: MouseButton, action: Action },
     /// The scroll wheel moved.

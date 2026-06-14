@@ -56,6 +56,8 @@ omni status                # daemon state and active sessions
 omni peers                 # known peers and their status
 omni disconnect <host>     # end a session
 omni stop                  # stop the daemon
+
+omni update                # update to the latest release
 ```
 
 On first accept the peer's certificate fingerprint is pinned; later connections
