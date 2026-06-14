@@ -5,13 +5,17 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-14 (high-DPI fix from a Windows↔macOS run: the process
-now declares per-monitor DPI awareness on Windows, so the screen size, the
-captured deltas, and the parked cursor all use real pixels. Before this, a
-scaled 2K/4K laptop mixed logical and physical coordinates, which biased every
-delta and dragged the remote cursor into the bottom-right corner — pinning it
-there and leaving the keyboard stuck on the remote. Plus earlier
-cursor-visibility fixes: the macOS sink warps the cursor so a remote-driven
+_Last updated: 2026-06-14 (TOFU stale-pin fix from a Windows↔macOS run:
+accepting a host whose certificate rotated now **replaces** its pin instead of
+appending a second one, and the trust store collapses any duplicate host pins
+on load. Before this, a stale pin could shadow the current one, so dialing a
+peer that had reconnected the other way refused its certificate
+(`ApplicationVerificationFailure`); the connect error now points at
+`omni peers remove`. Earlier the same day: a high-DPI fix making the Windows
+process per-monitor DPI aware so screen size, captured deltas, and the parked
+cursor all use real pixels — without it a scaled 2K/4K laptop dragged the
+remote cursor into a corner and left the keyboard stuck on the remote; plus
+cursor-visibility fixes — the macOS sink warps the cursor so a remote-driven
 move stays drawn, and the Windows source parks the local cursor instead of
 hiding it with the OS-global, crash-persistent `SetSystemCursor`.)_
 
