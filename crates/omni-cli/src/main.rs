@@ -6,6 +6,8 @@
 //! the hidden `daemon` subcommand, detached, so the daemon keeps running after
 //! the terminal closes.
 
+mod update;
+
 use clap::{Parser, Subcommand};
 use omni_runtime::Paths;
 use omni_runtime::ipc::{Request, Response, StatusInfo};
@@ -55,6 +57,8 @@ enum Command {
     },
     /// Check that the OS permissions and environment the daemon needs are in place.
     Doctor,
+    /// Update omni to the latest release.
+    Update,
     /// Stop the daemon and remove all config, certs, and peer data.
     Uninstall,
     /// Run the daemon in the foreground (what `omni start` launches).
@@ -132,6 +136,7 @@ fn main() -> ExitCode {
         } => simple(Request::RemovePeer { selector: host }, "removed"),
         Command::Layout { host, edge } => layout(host, edge),
         Command::Doctor => doctor(),
+        Command::Update => update::update(request),
         Command::Uninstall => uninstall(),
     }
 }
