@@ -25,6 +25,9 @@ pub type OsSink = WindowsSink;
 
 use windows_sys::Win32::Foundation::POINT;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetCursorPos, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SetWindowsHookExW,
     UnhookWindowsHookEx, WH_MOUSE_LL,
@@ -123,6 +126,30 @@ unsafe extern "system" fn noop_hook(
     unsafe { CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam) }
 }
 
+/// Prepares the process before any window, hook, or screen query happens.
+///
+/// Declares this process **per-monitor DPI aware (v2)**. Without it Windows
+/// virtualizes coordinates for a high-DPI display (a 2K/4K panel at >100%
+/// scaling): `GetSystemMetrics` would report a scaled-down logical size while
+/// the low-level mouse hook reports physical pixels, and `SetCursorPos` /
+/// `GetCursorPos` speak a third (logical) space. The capture loop mixes all
+/// three — parking the cursor at the logical centre and reading the next move
+/// at the physical centre — which injects a constant positive delta on every
+/// event, dragging a remotely-controlled cursor into the bottom-right corner
+/// and pinning it there. Becoming DPI aware makes every coordinate API agree
+/// on real pixels, so deltas, parking, and the virtual-desktop geometry all
+/// line up.
+///
+/// Safe and idempotent: calling it after awareness is already set is a no-op,
+/// and it must run before the first hook or screen query to take effect.
+pub fn prepare_process() {
+    // The only documented failure is "awareness already set", which is exactly
+    // the state we want, so the result is deliberately ignored.
+    unsafe {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+}
+
 /// The size of the primary display in pixels — the geometry Topology builds the
 /// virtual desktop from.
 pub fn primary_screen_size() -> Option<(u32, u32)> {
@@ -151,5 +178,31 @@ pub(crate) fn screen_center() -> (i32, i32) {
     match primary_screen_size() {
         Some((w, h)) => (w as i32 / 2, h as i32 / 2),
         None => (0, 0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prepare_process_is_idempotent() {
+        // It must be safe to call more than once per process: the CLI sets it,
+        // and the daemon sets it again. The second call is a no-op, not a panic.
+        prepare_process();
+        prepare_process();
+    }
+
+    #[test]
+    fn screen_center_is_half_of_the_reported_size() {
+        // After declaring DPI awareness the reported size is the real panel size,
+        // and the parking point the capture loop re-centres to is its middle —
+        // the same space the low-level hook reports moves in, so deltas do not
+        // pick up a constant bias.
+        prepare_process();
+        if let Some((w, h)) = primary_screen_size() {
+            assert_eq!(screen_center(), (w as i32 / 2, h as i32 / 2));
+            assert!(w > 0 && h > 0, "a real display has a positive size");
+        }
     }
 }

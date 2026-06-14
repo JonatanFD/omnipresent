@@ -18,3 +18,13 @@ pub mod trust;
 
 pub use config::{Config, Paths};
 pub use daemon::{DaemonError, run, run_with_paths};
+
+/// Prepares the current process before it reads the screen or installs input
+/// hooks: on Windows this declares per-monitor DPI awareness so every
+/// coordinate API speaks real pixels (a no-op on other platforms). The CLI
+/// calls it first thing so `omni doctor` and the daemon it launches agree on
+/// the display geometry. Safe to call once per process; the daemon also calls
+/// it itself, which is harmless.
+pub fn prepare_process() {
+    omni_input::platform::prepare_process();
+}

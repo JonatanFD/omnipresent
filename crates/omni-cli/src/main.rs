@@ -73,6 +73,11 @@ enum PeersAction {
 }
 
 fn main() -> ExitCode {
+    // Report and accept real pixels on a high-DPI display, before anything reads
+    // the screen size (`omni doctor`) or the daemon installs its input hooks
+    // (`omni daemon`). A no-op off Windows; safe to call once per process.
+    omni_runtime::prepare_process();
+
     match Cli::parse().command {
         Command::Daemon => match omni_runtime::run() {
             Ok(()) => ExitCode::SUCCESS,

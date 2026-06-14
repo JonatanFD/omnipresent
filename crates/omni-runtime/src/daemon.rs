@@ -173,6 +173,12 @@ pub fn run() -> Result<(), DaemonError> {
 /// more than one daemon in a single process (where a shared `OMNI_CONFIG_DIR`
 /// env var could not tell them apart).
 pub fn run_with_paths(paths: Paths) -> Result<(), DaemonError> {
+    // Before any screen query or input hook: make the process report and accept
+    // real pixels. On a high-DPI display this is what keeps the captured deltas,
+    // the parked cursor, and the virtual-desktop geometry in one coordinate
+    // space (a no-op off Windows). Must run first to take effect.
+    omni_input::platform::prepare_process();
+
     paths.ensure().map_err(|e| fail("config", e))?;
     init_logging(&paths);
 

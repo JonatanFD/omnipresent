@@ -5,10 +5,15 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-14 (cursor-visibility fixes from the first two-machine
-run: the macOS sink warps the cursor so a remote-driven move stays drawn, and
-the Windows source no longer hides the local cursor with the OS-global,
-crash-persistent `SetSystemCursor`)._
+_Last updated: 2026-06-14 (high-DPI fix from a Windows↔macOS run: the process
+now declares per-monitor DPI awareness on Windows, so the screen size, the
+captured deltas, and the parked cursor all use real pixels. Before this, a
+scaled 2K/4K laptop mixed logical and physical coordinates, which biased every
+delta and dragged the remote cursor into the bottom-right corner — pinning it
+there and leaving the keyboard stuck on the remote. Plus earlier
+cursor-visibility fixes: the macOS sink warps the cursor so a remote-driven
+move stays drawn, and the Windows source parks the local cursor instead of
+hiding it with the OS-global, crash-persistent `SetSystemCursor`.)_
 
 ## Where we are
 
@@ -141,8 +146,12 @@ and `cargo test` (98 tests), including on Windows.
   injects with `SendInput`, stamping events so the hooks never re-capture them.
   Needs no elevation for ordinary windows — only to drive administrator windows
   (User Interface Privilege Isolation). A `VK_* ↔ HID` keymap mirrors the other
-  platforms. (Built and unit-tested on Windows; needs live hardware to
-  exercise the full pipeline.)
+  platforms. The process declares **per-monitor DPI awareness (v2)** at startup
+  (`platform::prepare_process`), so on a scaled high-DPI display the hook
+  deltas, `SetCursorPos`/`GetCursorPos` parking, and `GetSystemMetrics` screen
+  size all share one physical-pixel space — without it the mismatch biased
+  every delta and pinned a remote-controlled cursor to a corner. (Built and
+  unit-tested on Windows; needs live hardware to exercise the full pipeline.)
 
 ### What `omni-transport` provides
 
