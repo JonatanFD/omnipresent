@@ -26,6 +26,11 @@ impl<P: ClipboardPort> ClipboardManager<P> {
         }
     }
 
+    /// Whether clipboard sharing is currently on.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
     /// Dynamically toggles clipboard sharing at runtime.
     pub fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
@@ -229,5 +234,18 @@ mod tests {
         // Disable dynamically
         manager.set_enabled(false);
         assert_eq!(manager.poll_local_change(), Err(ClipboardError::Disabled));
+    }
+
+    // Test Case 8: is_enabled reflects the current opt-in state
+    #[test]
+    fn test_manager_reports_enabled_state() {
+        let manager = ClipboardManager::new(MockClipboardBackend::new(), false);
+        assert!(!manager.is_enabled());
+
+        manager.set_enabled(true);
+        assert!(manager.is_enabled());
+
+        manager.set_enabled(false);
+        assert!(!manager.is_enabled());
     }
 }
