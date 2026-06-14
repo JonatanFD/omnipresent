@@ -86,6 +86,12 @@ struct X11CursorState {
     pixmap: x11_dl::xlib::Pixmap,
 }
 
+// Safety: X11CursorState is only ever accessed from the single capture thread.
+// The Display pointer is opened and closed on that same thread; Xlib itself
+// requires XInitThreads() for concurrent use, but we never share this across
+// threads concurrently.
+unsafe impl Send for X11CursorState {}
+
 impl std::fmt::Debug for X11CursorState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("X11CursorState").finish_non_exhaustive()
