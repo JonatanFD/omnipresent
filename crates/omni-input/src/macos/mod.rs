@@ -86,6 +86,12 @@ pub fn diagnose() -> Vec<crate::diag::Check> {
     vec![check]
 }
 
+/// Prepares the process before any capture or screen query. macOS reports
+/// display geometry in a single, consistent coordinate space, so there is
+/// nothing to do here; the hook exists only so the Runtime can call it on
+/// every platform. (See the Windows adapter, where it declares DPI awareness.)
+pub fn prepare_process() {}
+
 /// The size of the main display in global display coordinates — the geometry
 /// Topology builds the virtual desktop from.
 pub fn primary_screen_size() -> Option<(u32, u32)> {

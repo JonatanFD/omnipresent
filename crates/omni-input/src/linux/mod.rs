@@ -617,6 +617,12 @@ pub fn diagnose() -> Vec<crate::diag::Check> {
     checks
 }
 
+/// Prepares the process before any capture or screen query. The X11/Wayland
+/// display server owns coordinate scaling, so there is nothing the input
+/// adapter must do here; the hook exists only so the Runtime can call it on
+/// every platform. (See the Windows adapter, where it declares DPI awareness.)
+pub fn prepare_process() {}
+
 /// The screen size is not discoverable from evdev (it belongs to the display
 /// server); the Runtime falls back to configuration.
 pub fn primary_screen_size() -> Option<(u32, u32)> {
