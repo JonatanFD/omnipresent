@@ -5,8 +5,8 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-14 (v0.2.0: absolute-position pointer control across
-machines, and `omni update` self-update)._
+_Last updated: 2026-06-14 (global cursor hiding on suppression, true Linux
+cursor-position query, and opt-in `omni-clipboard` text/image sharing over QUIC)._
 
 ## Where we are
 
@@ -39,13 +39,14 @@ and `cargo test` (98 tests), including on Windows.
 
 | Crate            | Status        | What's there                                                                 |
 | ---------------- | ------------- | ---------------------------------------------------------------------------- |
-| `omni-protocol`  | **Implemented** | Ids, input events, control messages (incl. screen sizes and `CursorWarp`), and the postcard wire codec. 16 tests. |
+| `omni-protocol`  | **Implemented** | Ids, input events, control messages (incl. screen sizes and `CursorWarp`), clipboard payloads (`ClipboardData`/`ClipboardImage`, size-capped + overflow-checked), and the postcard wire codec. 21 tests. |
 | `omni-topology`  | **Implemented** | Virtual desktop layout, edge crossings, and the `LayoutStore` port. 13 tests. |
 | `omni-security`  | **Implemented** | Allowlist + TOFU trust policy, `TrustStore`/`CertProvider` ports, self-signed identity generation. 15 tests. |
 | `omni-session`   | **Implemented** | Session lifecycle, dynamic roles, active-target routing, `SessionEvents` port. 12 tests. |
-| `omni-input`     | **Implemented** | Ports, in-memory adapters, permission diagnostics, and the real OS adapters: macOS (CGEvent tap + post), Linux (evdev + uinput), and Windows (low-level hooks + SendInput). 13 tests. |
+| `omni-input`     | **Implemented** | Ports, in-memory adapters, permission diagnostics, and the real OS adapters: macOS (CGEvent tap + post), Linux (evdev + uinput), and Windows (low-level hooks + SendInput). Global cursor **hiding** on suppression (macOS `CGDisplayHideCursor`, Windows `SetSystemCursor`, Linux X11 empty-cursor on the root window) and true Linux cursor-position query (`XQueryPointer`). 13 tests. |
+| `omni-clipboard` | **Implemented** | Opt-in clipboard sharing (text + images) over a ports-and-adapters design: `arboard` adapter, in-memory mock, echo-loop guard, strict opt-in toggle. 7 tests. |
 | `omni-transport` | **Implemented** | `SecureChannel` port, framing, loopback channel, and the real QUIC adapter (quinn + rustls, mTLS, TOFU verifiers, datagrams + control stream). 12 tests. |
-| `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, cross-platform IPC (Unix socket / Windows named pipe), heartbeats, configurable layout, doctor checks, and the composition root that runs the pipelines. 18 tests + a two-daemon integration test. |
+| `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, cross-platform IPC (Unix socket / Windows named pipe), heartbeats, configurable layout, opt-in clipboard sync over the control stream, doctor checks, and the composition root that runs the pipelines. 19 tests + a two-daemon integration test. |
 | `omni-cli`       | **Implemented** | The full `omni` binary: start/stop/status, doctor, connect/disconnect, accept/reject, peers (+ remove), uninstall, over the daemon's Unix socket. |
 
 ### What `omni-protocol` provides
@@ -57,13 +58,17 @@ and `cargo test` (98 tests), including on Windows.
   packed `Modifiers`, `MouseButton`, `MouseDelta`, `ScrollDelta`.
 - **Control messages** (`control`): `ControlMessage` (`ConnectRequest`, `Accept`,
   `Reject`, `Disconnect`, `Heartbeat`, `CursorWarp`) and `RejectReason`.
-- **Wire codec** (`wire`): the `Message` envelope plus `encode`/`decode` over
+- **Wire codec** (`wire`): the `Message` envelope (`Input`, `Control`,
+  `Clipboard`) plus `encode`/`decode` over
   [postcard](https://docs.rs/postcard) — a compact varint binary format chosen
   for small datagrams and low-latency (de)serialization. Truncated or empty
   input is rejected.
 - **Handshake payloads**: `ConnectRequest` carries the initiator's screen size
   and `Accept` carries the target's machine id and screen size, so each side can
   place the other in its virtual desktop layout.
+- **Clipboard payloads** (`clipboard`): `ClipboardData` (text or `ClipboardImage`)
+  with overflow-checked dimension validation and a 64 MiB payload cap, so a
+  malformed or oversized payload is rejected before it is sent or applied.
 
 ### What `omni-topology` provides
 
@@ -259,10 +264,9 @@ Everything below is known, deliberate, and ordered roughly by importance:
 - **Linux and Windows are not hardware-tested.** The evdev/uinput adapters and
   the Win32 hook/`SendInput` adapters build and unit-test, but have not run
   against real devices on a live desktop.
-- **Cursor hiding on the inactive machine** while input is routed away (today
-  the remote cursor moves, and on Windows the local cursor is parked at centre,
-  but it is suppressed, not hidden).
-- **Clipboard sharing** — out of scope for now; will be opt-in when it comes.
+- **Live clipboard validation.** Opt-in clipboard sharing is implemented and
+  unit-tested (see `omni-clipboard`), but text/image sync between two real
+  machines has not been exercised end-to-end yet.
 
 ## Open decisions
 
