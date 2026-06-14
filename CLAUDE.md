@@ -67,6 +67,19 @@ omni layout <host> <edge>        # place a peer past left | right | top | bottom
 
 The placement is saved, so it also applies the next time that peer connects.
 
+## Clipboard
+
+Clipboard sharing is opt-in and off by default. Toggle it at runtime (no
+restart needed); the choice is saved and applies on the next start too.
+
+```
+omni clipboard on    # share clipboard copies with connected peers
+omni clipboard off   # stop sharing the clipboard
+```
+
+While off, the daemon never reads the local clipboard nor applies a remote one.
+`omni status` shows the current state.
+
 ## Update
 
 ```

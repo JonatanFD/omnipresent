@@ -5,7 +5,12 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-14 (TOFU stale-pin fix from a Windows↔macOS run:
+_Last updated: 2026-06-14 (clipboard sharing can now be toggled at runtime with
+`omni clipboard on|off` — the daemon flips the opt-in guard, wakes or parks the
+polling task, and persists the choice to the config so it survives a restart;
+`omni status` shows the current state. The poll task now parks for free while
+sharing is off, so the opt-in default costs nothing. Earlier the same day: a
+TOFU stale-pin fix from a Windows↔macOS run:
 accepting a host whose certificate rotated now **replaces** its pin instead of
 appending a second one, and the trust store collapses any duplicate host pins
 on load. Before this, a stale pin could shadow the current one, so dialing a
@@ -55,10 +60,10 @@ and `cargo test` (98 tests), including on Windows.
 | `omni-security`  | **Implemented** | Allowlist + TOFU trust policy, `TrustStore`/`CertProvider` ports, self-signed identity generation. 15 tests. |
 | `omni-session`   | **Implemented** | Session lifecycle, dynamic roles, active-target routing, `SessionEvents` port. 12 tests. |
 | `omni-input`     | **Implemented** | Ports, in-memory adapters, permission diagnostics, and the real OS adapters: macOS (CGEvent tap + post; the sink warps the cursor so a remote-driven move stays visible), Linux (evdev + uinput), and Windows (low-level hooks + SendInput; the local cursor is parked, not hidden). Cursor **hiding** on suppression where it is safe and self-restoring (macOS `CGDisplayHideCursor`, Linux X11 empty-cursor on the root window) and true Linux cursor-position query (`XQueryPointer`). 13 tests. |
-| `omni-clipboard` | **Implemented** | Opt-in clipboard sharing (text + images) over a ports-and-adapters design: `arboard` adapter, in-memory mock, echo-loop guard, strict opt-in toggle. 7 tests. |
+| `omni-clipboard` | **Implemented** | Opt-in clipboard sharing (text + images) over a ports-and-adapters design: `arboard` adapter, in-memory mock, echo-loop guard, strict opt-in toggle queryable at runtime. 8 tests. |
 | `omni-transport` | **Implemented** | `SecureChannel` port, framing, loopback channel, and the real QUIC adapter (quinn + rustls, mTLS, TOFU verifiers, datagrams + control stream). 12 tests. |
-| `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, cross-platform IPC (Unix socket / Windows named pipe), heartbeats, configurable layout, opt-in clipboard sync over the control stream, doctor checks, and the composition root that runs the pipelines. 19 tests + a two-daemon integration test. |
-| `omni-cli`       | **Implemented** | The full `omni` binary: start/stop/status, doctor, connect/disconnect, accept/reject, peers (+ remove), uninstall, over the daemon's Unix socket. |
+| `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, cross-platform IPC (Unix socket / Windows named pipe), heartbeats, configurable layout, opt-in clipboard sync over the control stream (toggleable at runtime and persisted), doctor checks, and the composition root that runs the pipelines. 21 tests + a two-daemon integration test. |
+| `omni-cli`       | **Implemented** | The full `omni` binary: start/stop/status, doctor, connect/disconnect, accept/reject, peers (+ remove), layout, clipboard on/off, uninstall, over the daemon's Unix socket. |
 
 ### What `omni-protocol` provides
 

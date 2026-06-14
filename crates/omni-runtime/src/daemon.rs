@@ -122,6 +122,9 @@ struct Shared {
     /// Opt-in clipboard sharing. Disabled by default; while off it neither reads
     /// the local clipboard nor applies a remote one.
     clipboard: ClipboardManager<ArboardAdapter>,
+    /// Wakes or parks the clipboard polling task when sharing is toggled. The
+    /// task idles for free while off (the default), so the opt-in costs nothing.
+    clipboard_on: watch::Sender<bool>,
     shutdown: tokio::sync::Notify,
 }
 
@@ -213,6 +216,7 @@ pub fn run_with_paths(paths: Paths) -> Result<(), DaemonError> {
             }
         };
         let (suppress_tx, suppress_rx) = watch::channel(false);
+        let (clipboard_on_tx, clipboard_on_rx) = watch::channel(config.clipboard_sharing_enabled);
 
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
@@ -237,6 +241,7 @@ pub fn run_with_paths(paths: Paths) -> Result<(), DaemonError> {
                 ArboardAdapter::new(),
                 config.clipboard_sharing_enabled,
             ),
+            clipboard_on: clipboard_on_tx,
             shutdown: tokio::sync::Notify::new(),
         });
         rebuild_layout(&mut shared.lock(), &shared);
@@ -259,12 +264,12 @@ pub fn run_with_paths(paths: Paths) -> Result<(), DaemonError> {
             }
         }
 
-        // Clipboard sharing: only when opted in. While off, no task runs and the
-        // local clipboard is never read.
-        if config.clipboard_sharing_enabled {
-            let clipboard_shared = shared.clone();
-            tokio::spawn(async move { run_clipboard(clipboard_shared).await });
-        }
+        // Clipboard sharing. The task parks while sharing is off (the default)
+        // and wakes to poll only when it is on, so it can be toggled at runtime
+        // (`omni clipboard on|off`) without restarting. While off the local
+        // clipboard is never read.
+        let clipboard_shared = shared.clone();
+        tokio::spawn(async move { run_clipboard(clipboard_shared, clipboard_on_rx).await });
 
         // Inbound connections.
         let accept_shared = shared.clone();
@@ -519,26 +524,52 @@ fn forward_to(state: &State, peer: MachineId, event: InputEvent) {
 // ---------------------------------------------------------------------------
 
 /// Polls the local clipboard and broadcasts any new copy to every connected
-/// peer over their reliable control streams. Runs only while sharing is enabled.
-/// A copy is sent to all peers, not just the active target, so it is available
-/// wherever the user pastes; the manager's echo guard stops it bouncing back.
-async fn run_clipboard(shared: Arc<Shared>) {
-    let mut interval = tokio::time::interval(CLIPBOARD_POLL);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+/// peer over their reliable control streams. It parks for free while sharing is
+/// off and polls only while it is on, so the opt-in default costs nothing and
+/// the toggle takes effect at once. Ends when the daemon shuts down (the toggle
+/// sender is dropped).
+async fn run_clipboard(shared: Arc<Shared>, mut enabled: watch::Receiver<bool>) {
     loop {
-        interval.tick().await;
-        let data = match shared.clipboard.poll_local_change() {
-            Ok(Some(data)) => data,
-            Ok(None) | Err(ClipboardError::Disabled) => continue,
-            Err(e) => {
-                tracing::warn!(%e, "could not read the local clipboard");
-                continue;
+        // Park until sharing is turned on. No clipboard read happens here.
+        while !*enabled.borrow() {
+            if enabled.changed().await.is_err() {
+                return; // daemon shutting down
             }
-        };
-        let state = shared.lock();
-        for link in state.links.values() {
-            let _ = link.commands.send(PeerCommand::Clipboard(data.clone()));
         }
+        // Sharing is on: poll until it is turned back off.
+        let mut interval = tokio::time::interval(CLIPBOARD_POLL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => broadcast_local_clipboard(&shared),
+                changed = enabled.changed() => {
+                    if changed.is_err() {
+                        return; // daemon shutting down
+                    }
+                    if !*enabled.borrow() {
+                        break; // back to parking
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Reads the local clipboard and, on a genuinely new copy, sends it to every
+/// connected peer — not just the active target, so it is available wherever the
+/// user pastes. The manager's echo guard stops it bouncing back.
+fn broadcast_local_clipboard(shared: &Arc<Shared>) {
+    let data = match shared.clipboard.poll_local_change() {
+        Ok(Some(data)) => data,
+        Ok(None) | Err(ClipboardError::Disabled) => return,
+        Err(e) => {
+            tracing::warn!(%e, "could not read the local clipboard");
+            return;
+        }
+    };
+    let state = shared.lock();
+    for link in state.links.values() {
+        let _ = link.commands.send(PeerCommand::Clipboard(data.clone()));
     }
 }
 
@@ -1036,6 +1067,7 @@ async fn dispatch(shared: &Arc<Shared>, request: Request) -> Response {
                     .into(),
             },
         },
+        Request::Clipboard { enabled } => set_clipboard(shared, enabled),
     }
 }
 
@@ -1110,6 +1142,37 @@ fn set_layout(shared: &Arc<Shared>, host: &str, edge: &str) -> Response {
     Response::Ok
 }
 
+/// Turns opt-in clipboard sharing on or off at runtime. Flips the manager's
+/// guard so both directions honor it at once, wakes or parks the polling task,
+/// and persists the choice to the config so it survives a restart.
+fn set_clipboard(shared: &Arc<Shared>, enabled: bool) -> Response {
+    shared.clipboard.set_enabled(enabled);
+    // The task may have ended already (shutdown); the guard above is what
+    // actually gates sharing, so a failed wake is harmless.
+    let _ = shared.clipboard_on.send(enabled);
+
+    match Config::load(&shared.paths) {
+        Ok(mut config) => {
+            config.clipboard_sharing_enabled = enabled;
+            if let Err(e) = config.save(&shared.paths) {
+                return Response::Error {
+                    message: format!(
+                        "clipboard sharing changed for now, but could not save it: {e}"
+                    ),
+                };
+            }
+        }
+        Err(e) => {
+            return Response::Error {
+                message: format!(
+                    "clipboard sharing changed for now, but could not read the config to save it: {e}"
+                ),
+            };
+        }
+    }
+    Response::Ok
+}
+
 /// Lists the current placements: live sessions first, then saved-but-not-
 /// connected hosts.
 fn list_layout(shared: &Arc<Shared>) -> Vec<LayoutInfo> {
@@ -1163,6 +1226,7 @@ fn status(shared: &Arc<Shared>) -> StatusInfo {
         fingerprint: shared.local_fingerprint.to_string(),
         port: shared.port,
         capturing: shared.capturing.load(std::sync::atomic::Ordering::Relaxed),
+        clipboard_sharing: shared.clipboard.is_enabled(),
         sessions: state
             .links
             .values()
