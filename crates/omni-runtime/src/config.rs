@@ -97,6 +97,11 @@ pub struct Config {
     /// A peer not listed here falls back to the default for how it connected.
     #[serde(default)]
     pub placements: HashMap<String, Edge>,
+    /// Opt-in clipboard sharing. Off by default: while disabled the daemon never
+    /// reads the local clipboard nor applies a remote one. A config file written
+    /// before this field existed loads as `false`.
+    #[serde(default)]
+    pub clipboard_sharing_enabled: bool,
 }
 
 impl Config {
@@ -175,6 +180,7 @@ mod tests {
             port: Some(5000),
             screen: Some((1920, 1080)),
             placements,
+            clipboard_sharing_enabled: true,
         };
         std::fs::write(paths.config_file(), serde_json::to_vec(&config).unwrap()).unwrap();
 
@@ -182,6 +188,17 @@ mod tests {
         assert_eq!(loaded, config);
         assert_eq!(loaded.port(), 5000);
         assert_eq!(loaded.edge_for("laptop"), Some(Edge::Top));
+        assert!(loaded.clipboard_sharing_enabled);
+    }
+
+    #[test]
+    fn clipboard_sharing_is_off_by_default() {
+        // The opt-in guarantee: defaults and legacy config files leave it off.
+        assert!(!Config::default().clipboard_sharing_enabled);
+        let paths = Paths::at(temp_dir("clipboard-legacy"));
+        std::fs::write(paths.config_file(), br#"{"port":4733}"#).unwrap();
+        let loaded = Config::load(&paths).unwrap();
+        assert!(!loaded.clipboard_sharing_enabled);
     }
 
     #[test]

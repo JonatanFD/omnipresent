@@ -15,11 +15,14 @@ use crate::ipc::{LayoutInfo, PeerInfo, PendingInfo, Request, Response, SessionIn
 use crate::ipc_transport::{IpcListener, IpcStream};
 use crate::ratelimit::RateLimiter;
 use crate::trust::{TrustState, peer_id_of};
+use omni_clipboard::adapter::ArboardAdapter;
+use omni_clipboard::domain::ClipboardError;
+use omni_clipboard::service::ClipboardManager;
 use omni_input::platform::{OsSink, OsSource};
 use omni_input::{InputSink, InputSource};
 use omni_protocol::{
-    ControlMessage, Fingerprint, InputEvent, MachineId, Message, RejectReason, ScreenSize,
-    SessionId,
+    ClipboardData, ControlMessage, Fingerprint, InputEvent, MachineId, Message, RejectReason,
+    ScreenSize, SessionId,
 };
 use omni_session::{ActiveTarget, Role, SessionEvent, SessionEvents, SessionManager};
 use omni_topology::{Crossing, CursorState, Edge, Machine, Point, Screen, VirtualLayout};
@@ -43,6 +46,9 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
 /// treated as dead and torn down. Several heartbeats' worth, so a couple of
 /// lost packets do not drop a healthy session.
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(8);
+/// How often the daemon checks the local clipboard for a new copy when sharing
+/// is enabled. Fast enough to feel instant, slow enough to be free.
+const CLIPBOARD_POLL: Duration = Duration::from_millis(500);
 
 /// Something a peer task is asked to do.
 enum PeerCommand {
@@ -50,6 +56,8 @@ enum PeerCommand {
     Input(InputEvent),
     /// Tell the peer to place its cursor at an absolute position (reliable).
     Warp { x: i32, y: i32 },
+    /// Send a clipboard update to the peer over the reliable control stream.
+    Clipboard(ClipboardData),
     /// End the session and close the connection.
     Disconnect,
 }
@@ -110,6 +118,9 @@ struct Shared {
     paths: Paths,
     /// Whether the capture thread is alive (false = target-only).
     capturing: std::sync::atomic::AtomicBool,
+    /// Opt-in clipboard sharing. Disabled by default; while off it neither reads
+    /// the local clipboard nor applies a remote one.
+    clipboard: ClipboardManager<ArboardAdapter>,
     shutdown: tokio::sync::Notify,
 }
 
@@ -209,6 +220,10 @@ pub fn run_with_paths(paths: Paths) -> Result<(), DaemonError> {
             port: config.port(),
             paths: paths.clone(),
             capturing: std::sync::atomic::AtomicBool::new(false),
+            clipboard: ClipboardManager::new(
+                ArboardAdapter::new(),
+                config.clipboard_sharing_enabled,
+            ),
             shutdown: tokio::sync::Notify::new(),
         });
         rebuild_layout(&mut shared.lock(), &shared);
@@ -229,6 +244,13 @@ pub fn run_with_paths(paths: Paths) -> Result<(), DaemonError> {
             Err(e) => {
                 tracing::warn!(%e, "input capture unavailable — running as target only");
             }
+        }
+
+        // Clipboard sharing: only when opted in. While off, no task runs and the
+        // local clipboard is never read.
+        if config.clipboard_sharing_enabled {
+            let clipboard_shared = shared.clone();
+            tokio::spawn(async move { run_clipboard(clipboard_shared).await });
         }
 
         // Inbound connections.
@@ -475,6 +497,34 @@ fn place_cursor_after_crossing(state: &State, shared: &Shared, crossing: Crossin
 fn forward_to(state: &State, peer: MachineId, event: InputEvent) {
     if let Some(link) = state.links.get(&peer) {
         let _ = link.commands.send(PeerCommand::Input(event));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Clipboard sharing (opt-in)
+// ---------------------------------------------------------------------------
+
+/// Polls the local clipboard and broadcasts any new copy to every connected
+/// peer over their reliable control streams. Runs only while sharing is enabled.
+/// A copy is sent to all peers, not just the active target, so it is available
+/// wherever the user pastes; the manager's echo guard stops it bouncing back.
+async fn run_clipboard(shared: Arc<Shared>) {
+    let mut interval = tokio::time::interval(CLIPBOARD_POLL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        interval.tick().await;
+        let data = match shared.clipboard.poll_local_change() {
+            Ok(Some(data)) => data,
+            Ok(None) | Err(ClipboardError::Disabled) => continue,
+            Err(e) => {
+                tracing::warn!(%e, "could not read the local clipboard");
+                continue;
+            }
+        };
+        let state = shared.lock();
+        for link in state.links.values() {
+            let _ = link.commands.send(PeerCommand::Clipboard(data.clone()));
+        }
     }
 }
 
@@ -752,6 +802,11 @@ async fn run_peer(
                         break;
                     }
                 }
+                Some(PeerCommand::Clipboard(data)) => {
+                    if control_tx.send(&Message::Clipboard(data)).await.is_err() {
+                        break;
+                    }
+                }
                 Some(PeerCommand::Disconnect) | None => {
                     let goodbye = Message::Control(ControlMessage::Disconnect { session });
                     let _ = control_tx.send(&goodbye).await;
@@ -789,6 +844,16 @@ async fn run_peer(
                     Ok(Some(Message::Control(ControlMessage::CursorWarp { session: claimed, x, y }))) => {
                         if claimed == session {
                             warp(&shared, x, y);
+                        }
+                    }
+                    Ok(Some(Message::Clipboard(data))) => {
+                        // Apply the peer's clipboard locally. Silently ignored
+                        // when sharing is off (the manager returns `Disabled`).
+                        match shared.clipboard.handle_remote_update(data) {
+                            Ok(()) | Err(ClipboardError::Disabled) => {}
+                            Err(e) => {
+                                tracing::warn!(%e, "could not apply remote clipboard update");
+                            }
                         }
                     }
                     Ok(Some(_)) => {} // heartbeats keep the session alive

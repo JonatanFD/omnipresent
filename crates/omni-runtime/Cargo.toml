@@ -12,6 +12,7 @@ omni-topology.workspace = true
 omni-session.workspace = true
 omni-security.workspace = true
 omni-transport.workspace = true
+omni-clipboard.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true

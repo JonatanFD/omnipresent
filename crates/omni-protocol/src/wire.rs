@@ -5,14 +5,18 @@
 //! (de)serialization. Framing and the secure channel are Transport's job; this
 //! module only turns a `Message` into bytes and back.
 
+use crate::clipboard::ClipboardData;
 use crate::control::ControlMessage;
 use crate::ids::SessionId;
 use crate::input::InputEvent;
 use serde::{Deserialize, Serialize};
 
-/// Anything that travels between two machines: either a single input event bound
-/// to a session, or an out-of-band control message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Anything that travels between two machines: an input event bound to a
+/// session, an out-of-band control message, or a clipboard payload.
+///
+/// `Message` is not `Copy`: a [`ClipboardData`] owns its text or pixel buffer,
+/// so messages are cloned or moved, never bit-copied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Message {
     /// An input event belonging to an established session.
     Input {
@@ -21,6 +25,9 @@ pub enum Message {
     },
     /// Session signalling (connect, accept, heartbeat, ...).
     Control(ControlMessage),
+    /// A clipboard update to apply on the receiver, when clipboard sharing is
+    /// enabled. Travels on the reliable control stream, not the datagram path.
+    Clipboard(ClipboardData),
 }
 
 /// Why encoding or decoding a [`Message`] failed.
@@ -91,6 +98,17 @@ mod tests {
                 action: Action::Release,
             },
         });
+    }
+
+    #[test]
+    fn clipboard_message_round_trips() {
+        use crate::clipboard::{ClipboardData, ClipboardImage};
+        round_trip(Message::Clipboard(ClipboardData::Text("hello".into())));
+        round_trip(Message::Clipboard(ClipboardData::Image(ClipboardImage {
+            width: 2,
+            height: 2,
+            bytes: vec![255; 16],
+        })));
     }
 
     #[test]

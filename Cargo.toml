@@ -13,6 +13,7 @@ repository = "https://github.com/JonatanFD/omnipresent"
 [workspace.dependencies]
 # Third-party. Pinned once here so every crate speaks the same versions.
 serde = { version = "1.0.228", features = ["derive"] }
+arboard = { version = "3.4.1", default-features = false, features = ["image-data"] }
 # Compact varint binary wire format, stable since 1.0 and built for low-latency
 # constrained/networking use — the right fit for input packets over UDP/DTLS.
 postcard = { version = "1.1.3", features = ["alloc"] }
@@ -50,6 +51,7 @@ core-graphics = { version = "0.25", features = ["highsierra"] }
 core-foundation = "0.10"
 # Linux input: evdev capture and uinput injection.
 evdev = "0.13"
+x11-dl = "2.21.0"
 # Windows input: low-level keyboard/mouse hooks (capture) and SendInput
 # (injection), plus screen metrics and the named-pipe IPC security flags.
 windows-sys = { version = "0.61.2", features = [
@@ -69,3 +71,4 @@ omni-session = { path = "crates/omni-session" }
 omni-security = { path = "crates/omni-security" }
 omni-transport = { path = "crates/omni-transport" }
 omni-runtime = { path = "crates/omni-runtime" }
+omni-clipboard = { path = "crates/omni-clipboard" }
