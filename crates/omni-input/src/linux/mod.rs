@@ -105,7 +105,7 @@ impl X11CursorState {
                 return None;
             }
             let root_window = (xlib.XDefaultRootWindow)(display);
-            let mut data = [0u8; 1];
+            let data = [0u8; 1];
             let pixmap = (xlib.XCreateBitmapFromData)(
                 display,
                 root_window,
