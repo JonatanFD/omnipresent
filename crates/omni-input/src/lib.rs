@@ -5,10 +5,10 @@
 //! [`InputSource`] and [`InputSink`] ports; the domain never sees a platform type.
 //!
 //! The crate provides the ports, in-memory adapters for tests, and the real
-//! per-OS adapters: macOS (CGEvent tap + CGEventPost) and Linux (evdev +
-//! uinput). The platform module for the current OS is re-exported as
-//! [`platform`], with its source/sink under the common names `OsSource` and
-//! `OsSink`.
+//! per-OS adapters: macOS (CGEvent tap + CGEventPost), Linux (evdev + uinput),
+//! and Windows (low-level hooks + SendInput). The platform module for the
+//! current OS is re-exported as [`platform`], with its source/sink under the
+//! common names `OsSource` and `OsSink`.
 
 pub mod diag;
 pub mod memory;
@@ -18,11 +18,15 @@ pub mod port;
 pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
+#[cfg(target_os = "windows")]
+pub mod windows;
 
 #[cfg(target_os = "linux")]
 pub use linux as platform;
 #[cfg(target_os = "macos")]
 pub use macos as platform;
+#[cfg(target_os = "windows")]
+pub use windows as platform;
 
 pub use memory::{QueuedSource, RecordingSink};
 pub use port::{InputSink, InputSource};

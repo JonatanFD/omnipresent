@@ -6,7 +6,9 @@
 //! runs): the identity key pair, the trust store, the config file, the IPC
 //! socket, and the daemon log.
 
+use omni_topology::Edge;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// The UDP port the daemon listens on unless configured otherwise.
@@ -65,6 +67,17 @@ impl Paths {
         self.dir.join("daemon.sock")
     }
 
+    /// The Windows named-pipe name for this state directory. Derived from the
+    /// directory path so two daemons with different `OMNI_CONFIG_DIR` (tests,
+    /// side-by-side runs) get distinct pipes, just as they get distinct socket
+    /// files on Unix.
+    pub fn pipe_name(&self) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.dir.hash(&mut hasher);
+        format!(r"\\.\pipe\omni-{:016x}", hasher.finish())
+    }
+
     pub fn log_file(&self) -> PathBuf {
         self.dir.join("daemon.log")
     }
@@ -79,11 +92,21 @@ pub struct Config {
     /// Screen size override as `[width, height]`, for platforms where it
     /// cannot be detected (Linux under Wayland/X11 without a display query).
     pub screen: Option<(u32, u32)>,
+    /// Which edge of this machine's screen a given peer sits past, keyed by
+    /// host. Lets the arrangement be more than the default left/right chain.
+    /// A peer not listed here falls back to the default for how it connected.
+    #[serde(default)]
+    pub placements: HashMap<String, Edge>,
 }
 
 impl Config {
     pub fn port(&self) -> u16 {
         self.port.unwrap_or(DEFAULT_PORT)
+    }
+
+    /// The configured edge for a peer host, if one was set.
+    pub fn edge_for(&self, host: &str) -> Option<Edge> {
+        self.placements.get(host).copied()
     }
 
     /// Loads the config file, or defaults if it does not exist.
@@ -93,6 +116,12 @@ impl Config {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(ConfigError::Io(e)),
         }
+    }
+
+    /// Writes the config back to disk as pretty JSON.
+    pub fn save(&self, paths: &Paths) -> Result<(), ConfigError> {
+        let bytes = serde_json::to_vec_pretty(self).map_err(ConfigError::Parse)?;
+        std::fs::write(paths.config_file(), bytes).map_err(ConfigError::Io)
     }
 }
 
@@ -140,15 +169,40 @@ mod tests {
     #[test]
     fn config_round_trips_through_the_file() {
         let paths = Paths::at(temp_dir("roundtrip"));
+        let mut placements = HashMap::new();
+        placements.insert("laptop".to_string(), Edge::Top);
         let config = Config {
             port: Some(5000),
             screen: Some((1920, 1080)),
+            placements,
         };
         std::fs::write(paths.config_file(), serde_json::to_vec(&config).unwrap()).unwrap();
 
         let loaded = Config::load(&paths).unwrap();
         assert_eq!(loaded, config);
         assert_eq!(loaded.port(), 5000);
+        assert_eq!(loaded.edge_for("laptop"), Some(Edge::Top));
+    }
+
+    #[test]
+    fn config_without_placements_still_loads() {
+        let paths = Paths::at(temp_dir("legacy"));
+        // A config file written before placements existed must still parse.
+        std::fs::write(paths.config_file(), br#"{"port":4733}"#).unwrap();
+        let loaded = Config::load(&paths).unwrap();
+        assert_eq!(loaded.port(), 4733);
+        assert!(loaded.placements.is_empty());
+    }
+
+    #[test]
+    fn config_saves_and_reloads_placements() {
+        let paths = Paths::at(temp_dir("save"));
+        let mut config = Config::default();
+        config.placements.insert("desktop".to_string(), Edge::Right);
+        config.save(&paths).unwrap();
+
+        let loaded = Config::load(&paths).unwrap();
+        assert_eq!(loaded.edge_for("desktop"), Some(Edge::Right));
     }
 
     #[test]

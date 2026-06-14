@@ -898,6 +898,7 @@ dependencies = [
  "core-graphics",
  "evdev",
  "omni-protocol",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

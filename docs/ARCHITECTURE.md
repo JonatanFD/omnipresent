@@ -67,8 +67,9 @@ this assignment; no role is hard-coded at build or config time.
 - `InputSource` — `fn poll(&mut self) -> Option<InputEvent>` (capture).
 - `InputSink` — `fn inject(&mut self, event: InputEvent)` (injection).
 
-**Adapters:** `macos` (CGEvent / IOKit), `linux` (evdev / uinput). Adapters are
-swapped per platform; the domain never sees a platform type.
+**Adapters:** `macos` (CGEvent tap / CGEventPost), `linux` (evdev / uinput),
+`windows` (low-level hooks / SendInput). Adapters are swapped per platform; the
+domain never sees a platform type.
 
 **Depends on:** Protocol (for `InputEvent`).
 
@@ -183,9 +184,9 @@ module.
 
 - Starts/stops the daemon (`omni start` / `omni stop`).
 - Runs the capture → route → send and receive → inject pipelines.
-- Exposes a **local IPC** surface (e.g. a Unix domain socket) so the `omni` CLI
-  can issue `connect`, `accept`, `reject`, `status`, etc., and receive
-  notifications of incoming requests.
+- Exposes a **local IPC** surface (a Unix domain socket on macOS/Linux, a named
+  pipe on Windows) so the `omni` CLI can issue `connect`, `accept`, `reject`,
+  `status`, `layout`, etc., and receive notifications of incoming requests.
 - Applies least-privilege startup (drop privileges after binding), per
   `CLAUDE.md`.
 

@@ -11,7 +11,8 @@
 //! - **IPC**: a Unix socket in the config dir serves the `omni` CLI.
 
 use crate::config::{Config, Paths};
-use crate::ipc::{PeerInfo, PendingInfo, Request, Response, SessionInfo, StatusInfo};
+use crate::ipc::{LayoutInfo, PeerInfo, PendingInfo, Request, Response, SessionInfo, StatusInfo};
+use crate::ipc_transport::{IpcListener, IpcStream};
 use crate::ratelimit::RateLimiter;
 use crate::trust::{TrustState, peer_id_of};
 use omni_input::platform::{OsSink, OsSource};
@@ -28,7 +29,6 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot, watch};
 
 /// How long the dialing side waits for the peer's user to accept.
@@ -37,6 +37,12 @@ const ACCEPT_TIMEOUT: Duration = Duration::from_secs(120);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Capture poll interval when no events are waiting.
 const CAPTURE_IDLE: Duration = Duration::from_micros(500);
+/// How often each side sends a heartbeat on an established session.
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
+/// How long a session may go without any word from the peer before it is
+/// treated as dead and torn down. Several heartbeats' worth, so a couple of
+/// lost packets do not drop a healthy session.
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Something a peer task is asked to do.
 enum PeerCommand {
@@ -83,6 +89,9 @@ struct State {
     cursor: CursorState,
     links: HashMap<MachineId, PeerLink>,
     pending: Vec<PendingRequest>,
+    /// Configured edge per peer host (from `omni layout`); overrides the
+    /// default placement when that host connects.
+    placements: HashMap<String, Edge>,
 }
 
 /// Everything the tasks share.
@@ -97,6 +106,8 @@ struct Shared {
     local_fingerprint: Fingerprint,
     local_screen: Screen,
     port: u16,
+    /// The state directory, so layout changes can be persisted.
+    paths: Paths,
     /// Whether the capture thread is alive (false = target-only).
     capturing: std::sync::atomic::AtomicBool,
     shutdown: tokio::sync::Notify,
@@ -139,9 +150,17 @@ fn fail(context: &str, e: impl std::fmt::Display) -> DaemonError {
 }
 
 /// Runs the daemon in the foreground until `omni stop` or a signal. This is
-/// what the hidden `omni daemon` subcommand calls.
+/// what the hidden `omni daemon` subcommand calls. Uses the standard state
+/// directory (`OMNI_CONFIG_DIR` or the platform default).
 pub fn run() -> Result<(), DaemonError> {
     let paths = Paths::resolve().map_err(|e| fail("config", e))?;
+    run_with_paths(paths)
+}
+
+/// Runs the daemon against an explicit state directory. Lets a test stand up
+/// more than one daemon in a single process (where a shared `OMNI_CONFIG_DIR`
+/// env var could not tell them apart).
+pub fn run_with_paths(paths: Paths) -> Result<(), DaemonError> {
     paths.ensure().map_err(|e| fail("config", e))?;
     init_logging(&paths);
 
@@ -178,6 +197,7 @@ pub fn run() -> Result<(), DaemonError> {
                 cursor: CursorState::new(local_machine, Point::new(0, 0)),
                 links: HashMap::new(),
                 pending: Vec::new(),
+                placements: config.placements.clone(),
             }),
             trust,
             endpoint,
@@ -187,6 +207,7 @@ pub fn run() -> Result<(), DaemonError> {
             local_fingerprint,
             local_screen,
             port: config.port(),
+            paths: paths.clone(),
             capturing: std::sync::atomic::AtomicBool::new(false),
             shutdown: tokio::sync::Notify::new(),
         });
@@ -224,16 +245,13 @@ pub fn run() -> Result<(), DaemonError> {
             }
         });
 
-        // IPC for the CLI.
-        let socket_path = paths.socket_file();
-        let _ = std::fs::remove_file(&socket_path);
-        let listener = UnixListener::bind(&socket_path).map_err(|e| fail("IPC socket", e))?;
-        restrict_socket(&socket_path);
+        // IPC for the CLI: a Unix socket or a Windows named pipe, owner-scoped.
+        let mut listener = IpcListener::bind(&paths).map_err(|e| fail("IPC channel", e))?;
         let ipc_shared = shared.clone();
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
-                    Ok((stream, _)) => {
+                    Ok(stream) => {
                         let shared = ipc_shared.clone();
                         tokio::spawn(handle_client(shared, stream));
                     }
@@ -251,15 +269,8 @@ pub fn run() -> Result<(), DaemonError> {
         tracing::info!("daemon shutting down");
         disconnect_all(&shared);
         shared.endpoint.close();
-        let _ = std::fs::remove_file(&socket_path);
         Ok(())
     })
-}
-
-/// Only the owner may command the daemon.
-fn restrict_socket(path: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
 }
 
 fn init_logging(paths: &Paths) {
@@ -283,18 +294,33 @@ async fn wait_for_shutdown(shared: &Arc<Shared>) {
     let interrupt = async {
         let _ = tokio::signal::ctrl_c().await;
     };
-    let terminate = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut sig) => {
-                sig.recv().await;
-            }
-            Err(_) => std::future::pending().await,
-        }
-    };
     tokio::select! {
         _ = shared.shutdown.notified() => {}
         _ = interrupt => {}
-        _ = terminate => {}
+        _ = terminate_signal() => {}
+    }
+}
+
+/// Resolves when the OS asks the daemon to terminate: `SIGTERM` on Unix, a
+/// console-close event on Windows. Pends forever if the signal cannot be
+/// registered, leaving `omni stop` and Ctrl-C as the ways out.
+#[cfg(unix)]
+async fn terminate_signal() {
+    match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        Ok(mut sig) => {
+            sig.recv().await;
+        }
+        Err(_) => std::future::pending().await,
+    }
+}
+
+#[cfg(windows)]
+async fn terminate_signal() {
+    match tokio::signal::windows::ctrl_close() {
+        Ok(mut sig) => {
+            sig.recv().await;
+        }
+        Err(_) => std::future::pending().await,
     }
 }
 
@@ -511,6 +537,9 @@ async fn handle_incoming(shared: Arc<Shared>, connection: QuicConnection) {
         let mut state = shared.lock();
         match state.sessions.establish(session, machine, Role::Target) {
             Ok(()) => {
+                // The controller reached us, so by default it sits past our
+                // left edge — unless `omni layout` placed this host elsewhere.
+                let edge = state.placements.get(&host).copied().unwrap_or(Edge::Left);
                 state.links.insert(
                     machine,
                     PeerLink {
@@ -519,9 +548,7 @@ async fn handle_incoming(shared: Arc<Shared>, connection: QuicConnection) {
                         session,
                         role: Role::Target,
                         screen: Screen::new(screen.width, screen.height),
-                        // The controller reached us, so it sits past our left
-                        // edge (we sit past its right edge).
-                        edge: Edge::Left,
+                        edge,
                         commands: commands_tx,
                     },
                 );
@@ -624,6 +651,9 @@ async fn do_connect(shared: &Arc<Shared>, host_arg: &str) -> Result<(), String> 
             .sessions
             .establish(session, machine, Role::Controller)
             .map_err(|e| format!("cannot establish session: {e}"))?;
+        // We dialed it: it sits past our right edge unless `omni layout` placed
+        // this host somewhere else.
+        let edge = state.placements.get(&host).copied().unwrap_or(Edge::Right);
         state.links.insert(
             machine,
             PeerLink {
@@ -632,8 +662,7 @@ async fn do_connect(shared: &Arc<Shared>, host_arg: &str) -> Result<(), String> 
                 session,
                 role: Role::Controller,
                 screen: Screen::new(screen.width, screen.height),
-                // We dialed it: the new machine sits past our right edge.
-                edge: Edge::Right,
+                edge,
                 commands: commands_tx,
             },
         );
@@ -688,7 +717,15 @@ async fn run_peer(
     let mut limiter = RateLimiter::default();
     let mut dropped: u64 = 0;
 
+    // Heartbeats: send one every interval, and treat the peer as dead if
+    // nothing has arrived from it within the timeout. Any inbound traffic
+    // (input datagram or control message) counts as proof of life.
+    let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut deadline = tokio::time::Instant::now() + HEARTBEAT_TIMEOUT;
+
     loop {
+        let liveness = tokio::time::sleep_until(deadline);
         tokio::select! {
             command = commands.recv() => match command {
                 Some(PeerCommand::Input(event)) => {
@@ -709,37 +746,53 @@ async fn run_peer(
                     break;
                 }
             },
-            incoming = transport.recv_async() => match incoming {
-                Ok(Some(Message::Input { session: claimed, event })) => {
-                    if claimed != session {
-                        continue; // not part of this session: drop silently
-                    }
-                    if !limiter.allow() {
-                        dropped += 1;
-                        if dropped.is_multiple_of(1_000) {
-                            tracing::warn!(dropped, "rate limit: dropping input events");
+            incoming = transport.recv_async() => {
+                deadline = tokio::time::Instant::now() + HEARTBEAT_TIMEOUT;
+                match incoming {
+                    Ok(Some(Message::Input { session: claimed, event })) => {
+                        if claimed != session {
+                            continue; // not part of this session: drop silently
                         }
-                        continue;
+                        if !limiter.allow() {
+                            dropped += 1;
+                            if dropped.is_multiple_of(1_000) {
+                                tracing::warn!(dropped, "rate limit: dropping input events");
+                            }
+                            continue;
+                        }
+                        inject(&shared, event);
                     }
-                    inject(&shared, event);
-                }
-                Ok(Some(_)) => {} // control messages do not ride datagrams
-                Ok(None) => break, // connection closed
-                Err(TransportError::Codec(e)) => {
-                    tracing::debug!(%e, "undecodable datagram dropped");
-                }
-                Err(TransportError::Channel(_)) => break,
-            },
-            signalling = control_rx.recv() => match signalling {
-                Ok(Some(Message::Control(ControlMessage::Disconnect { .. }))) | Ok(None) => break,
-                Ok(Some(Message::Control(ControlMessage::CursorWarp { session: claimed, x, y }))) => {
-                    if claimed == session {
-                        warp(&shared, x, y);
+                    Ok(Some(_)) => {} // control messages do not ride datagrams
+                    Ok(None) => break, // connection closed
+                    Err(TransportError::Codec(e)) => {
+                        tracing::debug!(%e, "undecodable datagram dropped");
                     }
+                    Err(TransportError::Channel(_)) => break,
                 }
-                Ok(Some(_)) => {} // heartbeats and the like
-                Err(_) => break,
             },
+            signalling = control_rx.recv() => {
+                deadline = tokio::time::Instant::now() + HEARTBEAT_TIMEOUT;
+                match signalling {
+                    Ok(Some(Message::Control(ControlMessage::Disconnect { .. }))) | Ok(None) => break,
+                    Ok(Some(Message::Control(ControlMessage::CursorWarp { session: claimed, x, y }))) => {
+                        if claimed == session {
+                            warp(&shared, x, y);
+                        }
+                    }
+                    Ok(Some(_)) => {} // heartbeats keep the session alive
+                    Err(_) => break,
+                }
+            },
+            _ = heartbeat.tick() => {
+                let beat = Message::Control(ControlMessage::Heartbeat { session });
+                if control_tx.send(&beat).await.is_err() {
+                    break;
+                }
+            }
+            _ = liveness => {
+                tracing::info!(machine = machine.value(), "peer timed out — no heartbeat");
+                break;
+            }
         }
     }
 
@@ -784,8 +837,8 @@ fn disconnect_all(shared: &Arc<Shared>) {
 // IPC
 // ---------------------------------------------------------------------------
 
-async fn handle_client(shared: Arc<Shared>, stream: UnixStream) {
-    let (read, mut write) = stream.into_split();
+async fn handle_client(shared: Arc<Shared>, stream: IpcStream) {
+    let (read, mut write) = tokio::io::split(stream);
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let request = serde_json::from_str::<Request>(&line);
@@ -860,7 +913,117 @@ async fn dispatch(shared: &Arc<Shared>, request: Request) -> Response {
                 },
             }
         }
+        Request::Layout { host, edge } => match (host, edge) {
+            (Some(host), Some(edge)) => set_layout(shared, &host, &edge),
+            (None, None) => Response::Layout {
+                placements: list_layout(shared),
+            },
+            _ => Response::Error {
+                message: "give both a host and an edge to place a peer, or \
+                          neither to list placements"
+                    .into(),
+            },
+        },
     }
+}
+
+/// Parses an edge name. Accepts the four edges and the up/down synonyms.
+fn parse_edge(name: &str) -> Option<Edge> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "left" => Some(Edge::Left),
+        "right" => Some(Edge::Right),
+        "top" | "up" => Some(Edge::Top),
+        "bottom" | "down" => Some(Edge::Bottom),
+        _ => None,
+    }
+}
+
+/// The lowercase name of an edge, for display and the wire.
+fn edge_name(edge: Edge) -> &'static str {
+    match edge {
+        Edge::Left => "left",
+        Edge::Right => "right",
+        Edge::Top => "top",
+        Edge::Bottom => "bottom",
+    }
+}
+
+/// Places a peer host past `edge`: records it for next time, persists it, and
+/// applies it to any live session with that host right now.
+fn set_layout(shared: &Arc<Shared>, host: &str, edge: &str) -> Response {
+    let Some(edge) = parse_edge(edge) else {
+        return Response::Error {
+            message: format!("unknown edge '{edge}' — use left, right, top, or bottom"),
+        };
+    };
+
+    {
+        let mut state = shared.lock();
+        state.placements.insert(host.to_string(), edge);
+        // Apply to a live link with this host immediately, so the change is
+        // visible without reconnecting.
+        let live: Vec<MachineId> = state
+            .links
+            .iter()
+            .filter(|(_, link)| link.host == host)
+            .map(|(machine, _)| *machine)
+            .collect();
+        for machine in live {
+            if let Some(link) = state.links.get_mut(&machine) {
+                link.edge = edge;
+            }
+        }
+        if !state.links.is_empty() {
+            rebuild_layout(&mut state, shared);
+            shared.sync_suppression(&state);
+        }
+    }
+
+    // Persist to the config file (merging into whatever else is there).
+    match Config::load(&shared.paths) {
+        Ok(mut config) => {
+            config.placements.insert(host.to_string(), edge);
+            if let Err(e) = config.save(&shared.paths) {
+                return Response::Error {
+                    message: format!("placed for now, but could not save it: {e}"),
+                };
+            }
+        }
+        Err(e) => {
+            return Response::Error {
+                message: format!("placed for now, but could not read the config to save it: {e}"),
+            };
+        }
+    }
+    Response::Ok
+}
+
+/// Lists the current placements: live sessions first, then saved-but-not-
+/// connected hosts.
+fn list_layout(shared: &Arc<Shared>) -> Vec<LayoutInfo> {
+    let state = shared.lock();
+    let mut placements = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for link in state.links.values() {
+        seen.insert(link.host.clone());
+        placements.push(LayoutInfo {
+            host: link.host.clone(),
+            edge: edge_name(link.edge).to_string(),
+            connected: true,
+        });
+    }
+    for (host, edge) in &state.placements {
+        if seen.contains(host) {
+            continue;
+        }
+        placements.push(LayoutInfo {
+            host: host.clone(),
+            edge: edge_name(*edge).to_string(),
+            connected: false,
+        });
+    }
+    placements.sort_by(|a, b| a.host.cmp(&b.host));
+    placements
 }
 
 fn decide_pending(shared: &Arc<Shared>, selector: &str, approve: bool) -> Response {

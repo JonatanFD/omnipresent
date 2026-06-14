@@ -1,15 +1,16 @@
 //! The `omni` binary: the single entry point for all user interaction.
 //!
 //! Every command except `start` is a thin client: one JSON request line over
-//! the daemon's Unix socket, one response line back, pretty-printed. `start`
-//! re-executes this binary with the hidden `daemon` subcommand, detached, so
-//! the daemon keeps running after the terminal closes.
+//! the daemon's local IPC channel (a Unix socket, or a named pipe on Windows),
+//! one response line back, pretty-printed. `start` re-executes this binary with
+//! the hidden `daemon` subcommand, detached, so the daemon keeps running after
+//! the terminal closes.
 
 use clap::{Parser, Subcommand};
 use omni_runtime::Paths;
 use omni_runtime::ipc::{Request, Response, StatusInfo};
+use omni_runtime::ipc_transport::connect_blocking;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -44,6 +45,13 @@ enum Command {
     Peers {
         #[command(subcommand)]
         action: Option<PeersAction>,
+    },
+    /// Show where peers sit in the virtual desktop, or place one. With no
+    /// arguments, lists placements; with a host and an edge
+    /// (left/right/top/bottom), places that peer.
+    Layout {
+        host: Option<String>,
+        edge: Option<String>,
     },
     /// Check that the OS permissions and environment the daemon needs are in place.
     Doctor,
@@ -122,8 +130,50 @@ fn main() -> ExitCode {
         Command::Peers {
             action: Some(PeersAction::Remove { host }),
         } => simple(Request::RemovePeer { selector: host }, "removed"),
+        Command::Layout { host, edge } => layout(host, edge),
         Command::Doctor => doctor(),
         Command::Uninstall => uninstall(),
+    }
+}
+
+/// Lists peer placements, or sets one when a host and edge are given.
+fn layout(host: Option<String>, edge: Option<String>) -> ExitCode {
+    match (host, edge) {
+        (Some(host), Some(edge)) => simple(
+            Request::Layout {
+                host: Some(host),
+                edge: Some(edge),
+            },
+            "placed",
+        ),
+        (host @ Some(_), None) => {
+            eprintln!(
+                "omni: give an edge too, e.g. `omni layout {} right`",
+                host.unwrap()
+            );
+            ExitCode::FAILURE
+        }
+        (None, _) => match request(Request::Layout {
+            host: None,
+            edge: None,
+        }) {
+            Ok(Response::Layout { placements }) => {
+                if placements.is_empty() {
+                    println!("no placements — peers use the default left/right chain");
+                } else {
+                    for p in placements {
+                        let state = if p.connected { "connected" } else { "saved" };
+                        println!("{}  past the {} edge  ({state})", p.host, p.edge);
+                    }
+                }
+                ExitCode::SUCCESS
+            }
+            Ok(other) => unexpected(other),
+            Err(e) => {
+                eprintln!("omni: {e}");
+                ExitCode::FAILURE
+            }
+        },
     }
 }
 
@@ -147,11 +197,10 @@ fn unexpected(response: Response) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// One request, one reply, over the daemon's socket.
+/// One request, one reply, over the daemon's IPC channel.
 fn request(req: Request) -> Result<Response, String> {
     let paths = Paths::resolve().map_err(|e| e.to_string())?;
-    let socket = paths.socket_file();
-    let mut stream = UnixStream::connect(&socket)
+    let mut stream = connect_blocking(&paths)
         .map_err(|_| "the daemon is not running (start it with `omni start`)".to_string())?;
     let mut line = serde_json::to_string(&req).map_err(|e| e.to_string())?;
     line.push('\n');
@@ -309,6 +358,8 @@ fn uninstall() -> ExitCode {
     }
 
     // Deleting the running binary is allowed on Unix (the inode lives on).
+    // Windows locks a running image, so deletion there fails and the user is
+    // told to remove it — by then nothing of omnipresent is left running.
     if let Ok(exe) = std::env::current_exe() {
         match std::fs::remove_file(&exe) {
             Ok(()) => println!("removed {}", exe.display()),

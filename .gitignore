@@ -1,1 +1,6 @@
 /target
+
+# Local dev-box toolchain workaround (a machine without the MSVC linker pins the
+# GNU target here); must not be committed, since CI and other machines use their
+# own host default.
+/.cargo/config.toml

@@ -21,23 +21,10 @@ pub fn load_or_generate(paths: &Paths) -> io::Result<LocalIdentity> {
             let identity =
                 generate_identity(&hostname()).map_err(|e| io::Error::other(e.to_string()))?;
             std::fs::write(&cert_path, identity.certificate_der())?;
-            write_private(&key_path, identity.private_key_der())?;
+            crate::secure::write_private(&key_path, identity.private_key_der())?;
             Ok(identity)
         }
     }
-}
-
-/// Writes key material with 0600 permissions.
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(bytes)
 }
 
 /// This machine's hostname, for the certificate common name. Purely cosmetic:
@@ -75,6 +62,7 @@ mod tests {
         assert_eq!(first.certificate_der(), second.certificate_der());
     }
 
+    #[cfg(unix)]
     #[test]
     fn key_file_is_owner_only() {
         use std::os::unix::fs::PermissionsExt;

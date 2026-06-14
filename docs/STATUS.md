@@ -5,25 +5,35 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-10 (doctor added after first live-pair testing)._
+_Last updated: 2026-06-13 (Windows support; heartbeats, configurable layout,
+daemon integration test, and CI added)._
 
 ## Where we are
 
-The project is **feature-complete for a first end-to-end build**. Every crate
-is implemented: the shared-kernel **Protocol**, **Topology** (virtual desktop
-and edge crossings), **Security** (allowlist + TOFU trust policy), **Session**
-(lifecycle, roles, input routing), **Input** (real macOS and Linux adapters),
-**Transport** (real QUIC adapter), the **Runtime** daemon that wires them all
-together, and the **CLI** (`omni`) that drives it over local IPC. The full
-pipeline — capture → route → QUIC datagram → inject, with TOFU handshake and
-accept/reject flow — exists in code and compiles on macOS; what it has *not*
-had yet is a live two-machine run (see "Not yet done").
+The project is **feature-complete for a first end-to-end build, on all three
+target platforms**. Every crate is implemented: the shared-kernel **Protocol**,
+**Topology** (virtual desktop and edge crossings), **Security** (allowlist +
+TOFU trust policy), **Session** (lifecycle, roles, input routing), **Input**
+(real macOS, Linux, *and Windows* adapters), **Transport** (real QUIC adapter),
+the **Runtime** daemon that wires them all together, and the **CLI** (`omni`)
+that drives it over local IPC. The full pipeline — capture → route → QUIC
+datagram → inject, with TOFU handshake and accept/reject flow — exists in code
+and builds on macOS, Linux, and Windows; what it has *not* had yet is a live
+two-machine run (see "Not yet done").
 
 The secure channel is **QUIC** (TLS 1.3 over UDP), via `quinn` + `rustls` —
 adopted in place of the originally planned DTLS 1.3 (see "Open decisions").
 
+Local IPC is a **Unix-domain socket** on macOS/Linux and a **named pipe** on
+Windows, behind one transport abstraction; sessions now exchange
+**heartbeats** and drop a silently-dead peer; the screen arrangement is
+**configurable** (`omni layout`) rather than a fixed left/right chain; and a
+**daemon-level integration test** drives two daemons through the real QUIC +
+IPC path. A **GitHub Actions** workflow runs the quality gate on all three
+platforms.
+
 The whole workspace builds clean under `cargo fmt`, `cargo clippy -D warnings`,
-and `cargo test` (95 tests).
+and `cargo test` (98 tests), including on Windows.
 
 ## Crate status
 
@@ -33,9 +43,9 @@ and `cargo test` (95 tests).
 | `omni-topology`  | **Implemented** | Virtual desktop layout, edge crossings, and the `LayoutStore` port. 13 tests. |
 | `omni-security`  | **Implemented** | Allowlist + TOFU trust policy, `TrustStore`/`CertProvider` ports, self-signed identity generation. 15 tests. |
 | `omni-session`   | **Implemented** | Session lifecycle, dynamic roles, active-target routing, `SessionEvents` port. 12 tests. |
-| `omni-input`     | **Implemented** | Ports, in-memory adapters, permission diagnostics, and the real OS adapters: macOS (CGEvent tap + post) and Linux (evdev + uinput). 13 tests. |
+| `omni-input`     | **Implemented** | Ports, in-memory adapters, permission diagnostics, and the real OS adapters: macOS (CGEvent tap + post), Linux (evdev + uinput), and Windows (low-level hooks + SendInput). 13 tests. |
 | `omni-transport` | **Implemented** | `SecureChannel` port, framing, loopback channel, and the real QUIC adapter (quinn + rustls, mTLS, TOFU verifiers, datagrams + control stream). 12 tests. |
-| `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, IPC types, doctor checks, and the composition root that runs the pipelines. 16 tests. |
+| `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, cross-platform IPC (Unix socket / Windows named pipe), heartbeats, configurable layout, doctor checks, and the composition root that runs the pipelines. 18 tests + a two-daemon integration test. |
 | `omni-cli`       | **Implemented** | The full `omni` binary: start/stop/status, doctor, connect/disconnect, accept/reject, peers (+ remove), uninstall, over the daemon's Unix socket. |
 
 ### What `omni-protocol` provides
@@ -114,6 +124,16 @@ and `cargo test` (95 tests).
   Needs only `input`-group membership — never root. A `KEY_* ↔ HID` keymap
   mirrors the macOS one. (Compile-checked against a Linux target; needs live
   hardware to exercise.)
+- **Windows adapters** (`windows`): `WindowsSource` captures through
+  `WH_KEYBOARD_LL` / `WH_MOUSE_LL` low-level hooks on a dedicated message-loop
+  thread (suppression swallows the event before the OS acts; mouse motion is
+  turned into relative deltas, with the cursor parked at screen centre while
+  controlling a remote so deltas never stall at an edge), and `WindowsSink`
+  injects with `SendInput`, stamping events so the hooks never re-capture them.
+  Needs no elevation for ordinary windows — only to drive administrator windows
+  (User Interface Privilege Isolation). A `VK_* ↔ HID` keymap mirrors the other
+  platforms. (Built and unit-tested on Windows; needs live hardware to
+  exercise the full pipeline.)
 
 ### What `omni-transport` provides
 
@@ -137,8 +157,10 @@ and `cargo test` (95 tests).
 
 - **Paths & config** (`config`): everything lives in one directory
   (`~/.config/omnipresent` on Linux, `~/Library/Application Support/omnipresent`
-  on macOS): `config.json` (UDP port, default 4733; optional screen-size
-  override), certificate + key, `trust.json`, the IPC socket, and the log.
+  on macOS, `%APPDATA%\omnipresent` on Windows): `config.json` (UDP port,
+  default 4733; optional screen-size override; per-host edge placements),
+  certificate + key, `trust.json`, the IPC socket (or named pipe on Windows),
+  and the log.
 - **Identity** (`identity`): generates a self-signed certificate on first run
   (via `rcgen`), persists it with `0600` permissions, reloads it afterwards —
   so the machine's fingerprint is stable across restarts.
@@ -149,9 +171,21 @@ and `cargo test` (95 tests).
 - **Rate limiter** (`ratelimit`): a token bucket capping injected events per
   session (default 2 000 events/s, burst 4 000) so a misbehaving peer cannot
   flood the local OS.
-- **IPC types** (`ipc`): the JSON-lines request/response protocol the CLI
-  speaks over the Unix socket (status, connect, accept, peers, ...). Status
+- **Identity, keys & secrets** (`identity`, `secure`): the self-signed
+  certificate is generated once and reused; the private key is written
+  owner-only — mode `0600` on Unix, an inheritance-stripped owner-only ACL on
+  Windows.
+- **IPC** (`ipc`, `ipc_transport`): the JSON-lines request/response protocol
+  the CLI speaks (status, connect, accept, peers, layout, ...), over one
+  transport abstraction — a Unix-domain socket on macOS/Linux, a per-state-dir
+  named pipe (local clients only, first-instance claimed) on Windows. Status
   reports whether input capture is live, so a target-only daemon is visible.
+- **Heartbeats**: each session sends a `Heartbeat` every 2 s and tears itself
+  down if nothing arrives from the peer within 8 s, so a silently-dropped peer
+  is noticed without waiting for QUIC's own idle timeout.
+- **Layout** (`omni layout`): per-host edge placements, applied live to an open
+  session and persisted to `config.json` for next time, so machines can be
+  arranged on any edge instead of a fixed left/right chain.
 - **Doctor** (`doctor`): environment checks behind `omni doctor` — the
   platform's input-permission diagnostics (Accessibility on macOS; evdev and
   uinput access on Linux) plus screen-size and state-directory checks.
@@ -171,7 +205,8 @@ The complete `omni` surface from the README: `start` (spawns the daemon
 detached via a hidden `daemon` subcommand and waits for the socket), `stop`,
 `status` (fingerprint, port, sessions with the input-here marker, pending
 requests), `connect` / `disconnect <host>`, `accept` / `reject
-<host|fingerprint>`, `peers` / `peers remove <host>`, `doctor` (prints every permission/environment
+<host|fingerprint>`, `peers` / `peers remove <host>`, `layout` (list or set
+where each peer sits), `doctor` (prints every permission/environment
 check and the daemon's own capture state, non-zero exit when something is
 unmet), and `uninstall` (stops the daemon, removes the config dir, deletes
 the binary). Each command is one JSON line to the daemon and one line back;
@@ -182,10 +217,16 @@ errors land on stderr with a non-zero exit.
 - Rust workspace, edition 2024, resolver 3.
 - Third-party deps pinned once in `[workspace.dependencies]`: `serde`, `postcard`,
   the network/crypto stack (`quinn`, `rustls` + `ring`, `rcgen`, `sha2`, `tokio`,
-  `bytes`), and the daemon/CLI layer (`clap`, `serde_json`, `dirs`, `rand`,
-  `tracing` + `tracing-subscriber`).
+  `bytes`), the daemon/CLI layer (`clap`, `serde_json`, `dirs`, `rand`,
+  `tracing` + `tracing-subscriber`), and the per-OS input/IPC backends
+  (`core-graphics`/`core-foundation` on macOS, `evdev` on Linux, `windows-sys`
+  on Windows).
 - Quality gate per change: `cargo fmt --all`, `cargo clippy --workspace
-  --all-targets -- -D warnings`, `cargo test`.
+  --all-targets -- -D warnings`, `cargo test` — run locally and in CI
+  (GitHub Actions) across Linux, macOS, and Windows.
+- Building on Windows needs a linker: native MSVC (the standard runner toolchain
+  CI uses), or the self-contained `x86_64-pc-windows-gnu` toolchain plus a
+  MinGW-w64 C toolchain for the `ring` crypto backend on a box without MSVC.
 
 ## Workflow
 
@@ -203,31 +244,19 @@ against ports using in-memory adapters.
 
 Everything below is known, deliberate, and ordered roughly by importance:
 
-- **Live two-machine validation.** The full pipeline compiles and its parts are
-  unit-tested, but `omni connect` between two real machines (macOS ↔ Linux) has
-  not been exercised yet. This is the next step, and will likely shake out
-  small bugs in edge-crossing feel, warp coordinates, and reconnect behaviour.
-- **Layout is fixed, not configurable.** The daemon places a peer you dial past
-  your **right** edge and a peer that dials you past your **left** edge. There
-  is no `omni layout` command to choose edges, stack machines vertically, or
-  arrange more than a simple left/right chain. Topology supports all of it;
-  the configuration surface doesn't exist yet.
-- **Heartbeats are defined but unused.** `ControlMessage::Heartbeat` exists in
-  the protocol, but the daemon neither sends them nor times out a silent peer —
-  a dead connection is noticed only when QUIC itself gives up.
-- **No daemon-level integration test.** The runtime's support modules (config,
-  identity, trust, rate limiter, IPC types) are tested; `daemon.rs` itself —
-  the task wiring and the IPC loop — is exercised only by hand. A
-  two-daemon-in-one-process or socket-level test is wanted.
-- **`omni start` is plain detach.** No launchd/systemd service files yet, so
-  the daemon does not survive a reboot or restart on crash.
-- **Linux is compile-checked, not hardware-tested.** The evdev/uinput adapters
-  and the daemon build for Linux but have not run against real devices.
-- **CI**: a GitHub Actions workflow running fmt + clippy + test (currently
-  these run only locally).
+- **Live two-machine validation.** The full pipeline compiles, is unit-tested,
+  and is exercised end-to-end *within one host* by the daemon integration test,
+  but `omni connect` between two real machines (macOS ↔ Linux ↔ Windows) has not
+  been run yet. This is the next step, and will likely shake out small bugs in
+  edge-crossing feel, warp coordinates, and reconnect behaviour.
+- **`omni start` is plain detach.** No launchd/systemd/Windows-service files
+  yet, so the daemon does not survive a reboot or restart on crash.
+- **Linux and Windows are not hardware-tested.** The evdev/uinput adapters and
+  the Win32 hook/`SendInput` adapters build and unit-test, but have not run
+  against real devices on a live desktop.
 - **Cursor hiding on the inactive machine** while input is routed away (today
-  the remote cursor moves, but the local one merely stops — it is suppressed,
-  not hidden).
+  the remote cursor moves, and on Windows the local cursor is parked at centre,
+  but it is suppressed, not hidden).
 - **Clipboard sharing** — out of scope for now; will be opt-in when it comes.
 
 ## Open decisions
@@ -239,8 +268,10 @@ Everything below is known, deliberate, and ordered roughly by importance:
   keeps every required property (UDP-only, mutual cert auth, TOFU, anti-replay,
   modern crypto), carries input over unreliable datagrams (RFC 9221), and has the
   most mature pure-Rust implementation.
-- **Local IPC: decided — Unix domain socket** in the config directory, mode
-  0600, JSON lines (one request, one response). Simple, debuggable with `nc`,
-  and access-controlled by file permissions.
+- **Local IPC: decided — Unix domain socket** in the config directory (mode
+  0600) on macOS/Linux, and a **named pipe** (local clients only, first
+  instance claimed) on Windows, behind one transport abstraction. JSON lines,
+  one request, one response. Simple, debuggable, and access-controlled by the
+  platform's own mechanism.
 - Wire-format versioning: whether to prepend a protocol version byte in Transport
   framing (deliberately left out of the Protocol codec for now).
