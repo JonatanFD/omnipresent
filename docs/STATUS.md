@@ -5,8 +5,8 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-13 (Windows support; heartbeats, configurable layout,
-daemon integration test, and CI added)._
+_Last updated: 2026-06-14 (v0.2.0: absolute-position pointer control across
+machines, and `omni update` self-update)._
 
 ## Where we are
 
@@ -192,7 +192,11 @@ and `cargo test` (98 tests), including on Windows.
 - **The daemon** (`daemon`): the composition root. A capture thread polls the
   OS input source and advances the virtual cursor through Topology; an edge
   crossing flips Session's active target, suppresses local input, and warps
-  the peer's cursor to the entry point. Input events ride unreliable QUIC
+  the peer's cursor to the entry point. While a remote peer is active, pointer
+  motion travels as the cursor's **absolute position on the peer's screen**
+  (mapped through the virtual desktop using both machines' sizes), not raw
+  relative deltas — so the two cursors cannot drift apart and control stays
+  correct across different resolutions. Input events ride unreliable QUIC
   datagrams to the active peer; signalling (connect/accept/disconnect/warp)
   rides the reliable control stream. Each peer connection runs in its own
   task; incoming requests from unknown peers wait (up to 120 s) for
@@ -206,7 +210,8 @@ detached via a hidden `daemon` subcommand and waits for the socket), `stop`,
 `status` (fingerprint, port, sessions with the input-here marker, pending
 requests), `connect` / `disconnect <host>`, `accept` / `reject
 <host|fingerprint>`, `peers` / `peers remove <host>`, `layout` (list or set
-where each peer sits), `doctor` (prints every permission/environment
+where each peer sits), `update` (self-update to the latest GitHub release —
+stops the daemon, swaps the binary, restarts it), `doctor` (prints every permission/environment
 check and the daemon's own capture state, non-zero exit when something is
 unmet), and `uninstall` (stops the daemon, removes the config dir, deletes
 the binary). Each command is one JSON line to the daemon and one line back;
