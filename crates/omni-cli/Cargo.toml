@@ -1,0 +1,16 @@
+[package]
+name = "omni-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "omni"
+path = "src/main.rs"
+
+[dependencies]
+omni-runtime.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+self-replace.workspace = true
