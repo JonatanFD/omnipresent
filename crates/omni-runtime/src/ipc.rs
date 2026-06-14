@@ -23,6 +23,13 @@ pub enum Request {
     Peers,
     /// Forget a peer (by host or fingerprint prefix).
     RemovePeer { selector: String },
+    /// Inspect or change where peers sit in the virtual desktop. With `host`
+    /// and `edge` set, place that peer past the given edge; with both `None`,
+    /// list the current placements.
+    Layout {
+        host: Option<String>,
+        edge: Option<String>,
+    },
 }
 
 /// The daemon's answer.
@@ -33,6 +40,7 @@ pub enum Response {
     Error { message: String },
     Status(StatusInfo),
     Peers { peers: Vec<PeerInfo> },
+    Layout { placements: Vec<LayoutInfo> },
 }
 
 /// What `omni status` shows.
@@ -72,6 +80,17 @@ pub struct PendingInfo {
 pub struct PeerInfo {
     pub host: Option<String>,
     pub fingerprint: String,
+    pub connected: bool,
+}
+
+/// One peer's placement in the virtual desktop, as `omni layout` reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutInfo {
+    pub host: String,
+    /// The edge this peer sits past: "left", "right", "top", or "bottom".
+    pub edge: String,
+    /// Whether this placement is from a live session (`true`) or only saved in
+    /// the config for the next time the peer connects (`false`).
     pub connected: bool,
 }
 

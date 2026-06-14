@@ -11,8 +11,10 @@ pub mod daemon;
 pub mod doctor;
 pub mod identity;
 pub mod ipc;
+pub mod ipc_transport;
 pub mod ratelimit;
+pub mod secure;
 pub mod trust;
 
 pub use config::{Config, Paths};
-pub use daemon::{DaemonError, run};
+pub use daemon::{DaemonError, run, run_with_paths};
