@@ -18,11 +18,11 @@ paths:
 
 # Networking & Security Constraints
 
-- Transport is UDP only. Never introduce TCP as a fallback.
-- All UDP traffic must be wrapped in DTLS 1.3. Plaintext packets must be dropped immediately.
-- Both peers must authenticate with certificates (mTLS). Anonymous connections are forbidden.
-- Implement TOFU: store the peer's certificate fingerprint on first connect and reject changes on subsequent connections.
-- Enable DTLS replay protection. Packets outside the replay window must be silently dropped.
+- Transport is UDP only. Never introduce TCP as a fallback. (QUIC runs over UDP.)
+- All traffic must run over a QUIC connection (TLS 1.3 over UDP). Plaintext packets must be dropped immediately. Input events use unreliable QUIC datagrams (RFC 9221); control/session signalling may use a reliable QUIC stream.
+- Both peers must authenticate with certificates (mTLS) via QUIC's TLS 1.3 handshake. Anonymous connections are forbidden.
+- Implement TOFU: store the peer's certificate fingerprint on first connect and reject changes on subsequent connections (enforced through a custom rustls certificate verifier).
+- Rely on QUIC's built-in AEAD packet protection and replay detection. Packets outside the replay window must be silently dropped.
 - Maintain a per-machine allowlist of trusted peer addresses and certificate fingerprints. Reject unlisted peers before any input processing.
 - Apply input event rate limiting per session to prevent flooding.
 - The daemon must drop to least-privilege after startup. Use OS capabilities or sandbox APIs, never run as root unless strictly required by the input subsystem.
@@ -35,3 +35,7 @@ paths:
 - Reliability: The system must be reliable, with no data loss or corruption, and fast response times.
 - Scalability: The system must be scalable, with the ability to handle increasing loads and data volumes.
 - Maintainability: The system must be maintainable, with clear and concise code that is easy to understand and modify.
+
+# Development Workflow
+
+- Documentation must keep up with the code. Whenever a module (crate) is finished, update `docs/STATUS.md` in the same change: move that crate to "Implemented" with a short summary of what it provides, refresh the "What's next" roadmap, and bump the "Last updated" date.

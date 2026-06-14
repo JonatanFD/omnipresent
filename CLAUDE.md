@@ -14,7 +14,8 @@ The core is split into bounded-context modules (Input, Topology, Session,
 Security, Transport), a shared-kernel **Protocol** crate, and a **Runtime**
 daemon that wires them together and serves the CLI. See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design, ports,
-data flow, and crate layout.
+data flow, and crate layout. See [`docs/STATUS.md`](docs/STATUS.md) for the
+current implementation status and what's next to build.
 
 # CLI Interface
 
@@ -26,6 +27,7 @@ All interaction happens through the `omni` binary.
 omni start          # start the background daemon
 omni stop           # stop the running daemon
 omni status         # show whether the daemon is running and list active connections
+omni doctor         # check that the OS permissions and environment the daemon needs are in place
 ```
 
 ## Connections
@@ -53,6 +55,24 @@ omni peers                  # list all known peers and their status (connected /
 omni peers remove <host>    # remove a peer from the trusted list
 ```
 
+## Layout
+
+By default a peer you dial sits past your right edge, and a peer that dials you
+sits past your left edge. Override that per host:
+
+```
+omni layout                      # list where each peer sits in the virtual desktop
+omni layout <host> <edge>        # place a peer past left | right | top | bottom
+```
+
+The placement is saved, so it also applies the next time that peer connects.
+
+## Update
+
+```
+omni update         # download and install the latest release, then restart the daemon
+```
+
 ## Uninstall
 
 ```
@@ -65,7 +85,7 @@ omni uninstall   # stop the daemon, remove all config, certs, and peer data, the
 
 - Keyboard and mouse sharing across machines
 - Seamless cursor transition between screens
-- Cross-platform: macOS and Linux at minimum
+- Cross-platform: macOS, Linux, and Windows
 - No audio redirection
 
 # Technical constraints
@@ -77,13 +97,22 @@ omni uninstall   # stop the daemon, remove all config, certs, and peer data, the
 ## Network protocol
 
 - **Transport:** UDP only — low latency is critical for real-time input events.
-- **Security layer:** DTLS 1.3 (Datagram TLS) wraps every UDP packet.
+- **Security layer:** QUIC (TLS 1.3 over UDP). Every connection is encrypted and
+  mutually authenticated by QUIC's built-in TLS 1.3; there is no plaintext path.
+- **Input delivery:** unreliable QUIC datagrams (RFC 9221) carry input events, so
+  a lost packet is dropped rather than retransmitted — stale input is never worth
+  resending. Control/session signalling can use a reliable QUIC stream.
+
+  > QUIC replaces the originally planned DTLS 1.3. It keeps every required
+  > property (UDP-only, mutual cert auth, TOFU, anti-replay, modern crypto) while
+  > having the most mature pure-Rust implementation (`quinn` + `rustls`), with no
+  > C-library dependency. See `docs/STATUS.md` for the rationale.
 
 ## Security practices
 
 - **Mutual authentication (mTLS):** both the controller and each target machine present certificates. No anonymous connections.
 - **Trust On First Use (TOFU):** on first connection, pin the peer's certificate fingerprint locally. Reject any cert change on subsequent connections.
-- **Anti-replay protection:** enable DTLS built-in sequence-number replay detection. Drop duplicate or out-of-window packets.
+- **Anti-replay protection:** rely on QUIC's built-in AEAD packet protection and packet-number replay detection. Drop duplicate or out-of-window packets.
 - **Allowlist only:** each machine maintains an explicit list of allowed peer addresses/fingerprints. Reject everything else at the network boundary before any processing.
 - **Input rate limiting:** cap input events per second per session to prevent event flooding or amplification abuse.
 - **Least privilege:** the daemon runs with the minimum OS permissions needed — no root unless strictly required by the input subsystem, drop privileges after binding.

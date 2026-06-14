@@ -1,0 +1,21 @@
+[package]
+name = "omni-input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+omni-protocol.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics.workspace = true
+core-foundation.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev.workspace = true
+x11-dl.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys.workspace = true
