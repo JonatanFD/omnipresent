@@ -127,8 +127,20 @@ impl InputSource for WindowsSource {
     }
 
     fn set_suppressed(&mut self, suppressed: bool) {
-        SUPPRESSED.store(suppressed, Ordering::Relaxed);
+        let was_suppressed = SUPPRESSED.swap(suppressed, Ordering::Relaxed);
         if suppressed {
+            if !was_suppressed {
+                unsafe {
+                    for &id in SYSTEM_CURSORS {
+                        let h_cursor = create_transparent_cursor();
+                        if !h_cursor.is_null() {
+                            windows_sys::Win32::UI::WindowsAndMessaging::SetSystemCursor(
+                                h_cursor, id,
+                            );
+                        }
+                    }
+                }
+            }
             // Park the cursor at the screen centre and anchor relative motion
             // there, so deltas keep flowing instead of stalling at a screen
             // edge while we control the remote machine.
@@ -138,9 +150,55 @@ impl InputSource for WindowsSource {
             LAST_Y.store(cy, Ordering::Relaxed);
             HAVE_LAST.store(true, Ordering::Relaxed);
         } else {
+            if was_suppressed {
+                unsafe {
+                    windows_sys::Win32::UI::WindowsAndMessaging::SystemParametersInfoW(
+                        SPI_SETCURSORS,
+                        0,
+                        std::ptr::null_mut(),
+                        SPIF_SENDCHANGE,
+                    );
+                }
+            }
             // Re-anchor on the next real move so the cursor does not jump.
             HAVE_LAST.store(false, Ordering::Relaxed);
         }
+    }
+}
+
+const SPI_SETCURSORS: u32 = 87;
+const SPIF_SENDCHANGE: u32 = 2;
+
+const SYSTEM_CURSORS: &[u32] = &[
+    32512, // OCR_NORMAL
+    32513, // OCR_IBEAM
+    32514, // OCR_WAIT
+    32515, // OCR_CROSS
+    32516, // OCR_UP
+    32642, // OCR_SIZENWSE
+    32643, // OCR_SIZENESW
+    32644, // OCR_SIZEWE
+    32645, // OCR_SIZENS
+    32646, // OCR_SIZEALL
+    32648, // OCR_NO
+    32649, // OCR_HAND
+    32650, // OCR_APPSTARTING
+];
+
+unsafe fn create_transparent_cursor() -> windows_sys::Win32::UI::WindowsAndMessaging::HCURSOR {
+    let and_mask = [0xFFu8; 128]; // 32 * 32 bits / 8 = 128 bytes
+    let xor_mask = [0x00u8; 128];
+    // Edition 2024 requires an explicit `unsafe` block even inside an `unsafe fn`.
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::CreateCursor(
+            std::ptr::null_mut(),
+            0,
+            0,
+            32,
+            32,
+            and_mask.as_ptr() as *const std::ffi::c_void,
+            xor_mask.as_ptr() as *const std::ffi::c_void,
+        )
     }
 }
 
@@ -153,6 +211,15 @@ impl Drop for WindowsSource {
         }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
+        }
+        // Restore default system cursors unconditionally
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::SystemParametersInfoW(
+                SPI_SETCURSORS,
+                0,
+                std::ptr::null_mut(),
+                SPIF_SENDCHANGE,
+            );
         }
         Self::release();
     }
@@ -372,4 +439,30 @@ fn xbutton(info: &MSLLHOOKSTRUCT) -> MouseButton {
 fn wheel_delta(info: &MSLLHOOKSTRUCT) -> i32 {
     let raw = (info.mouseData >> 16) as i16 as i32;
     raw / WHEEL_DELTA as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_transparent_cursor() {
+        unsafe {
+            let h_cursor = create_transparent_cursor();
+            // If the cursor was successfully created (returns non-zero handle),
+            // we should make sure we destroy it or restore system cursors to avoid leaks
+            // in tests. But actually SetSystemCursor takes ownership and destroys it.
+            // If we didn't call SetSystemCursor, we could DestroyIcon/DestroyCursor,
+            // but just running SystemParametersInfoW will reset cursors.
+            if !h_cursor.is_null() {
+                windows_sys::Win32::UI::WindowsAndMessaging::DestroyCursor(h_cursor);
+            }
+            windows_sys::Win32::UI::WindowsAndMessaging::SystemParametersInfoW(
+                SPI_SETCURSORS,
+                0,
+                std::ptr::null_mut(),
+                SPIF_SENDCHANGE,
+            );
+        }
+    }
 }

@@ -57,11 +57,106 @@ impl std::fmt::Display for LinuxInputError {
 
 impl std::error::Error for LinuxInputError {}
 
+static XLIB: std::sync::OnceLock<Result<x11_dl::xlib::Xlib, x11_dl::error::OpenError>> =
+    std::sync::OnceLock::new();
+
+unsafe extern "C" fn io_error_handler(_display: *mut x11_dl::xlib::Display) -> std::os::raw::c_int {
+    tracing::error!("X11 fatal I/O error: connection to X server lost.");
+    0
+}
+
+fn get_xlib() -> Option<&'static x11_dl::xlib::Xlib> {
+    XLIB.get_or_init(|| {
+        let xlib = x11_dl::xlib::Xlib::open()?;
+        unsafe {
+            (xlib.XInitThreads)();
+            (xlib.XSetIOErrorHandler)(Some(io_error_handler));
+        }
+        Ok(xlib)
+    })
+    .as_ref()
+    .ok()
+}
+
+struct X11CursorState {
+    xlib: &'static x11_dl::xlib::Xlib,
+    display: *mut x11_dl::xlib::Display,
+    root_window: x11_dl::xlib::Window,
+    cursor: x11_dl::xlib::Cursor,
+    pixmap: x11_dl::xlib::Pixmap,
+}
+
+impl std::fmt::Debug for X11CursorState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("X11CursorState").finish_non_exhaustive()
+    }
+}
+
+impl X11CursorState {
+    fn hide() -> Option<Self> {
+        let xlib = get_xlib()?;
+        unsafe {
+            let display = (xlib.XOpenDisplay)(std::ptr::null());
+            if display.is_null() {
+                tracing::warn!(
+                    "Failed to open X11 display. If running under Wayland, global cursor \
+                     hiding is restricted by the compositor."
+                );
+                return None;
+            }
+            let root_window = (xlib.XDefaultRootWindow)(display);
+            let mut data = [0u8; 1];
+            let pixmap = (xlib.XCreateBitmapFromData)(
+                display,
+                root_window,
+                data.as_ptr() as *const std::os::raw::c_char,
+                1,
+                1,
+            );
+            if pixmap == 0 {
+                (xlib.XCloseDisplay)(display);
+                return None;
+            }
+            let mut color: x11_dl::xlib::XColor = std::mem::zeroed();
+            let cursor =
+                (xlib.XCreatePixmapCursor)(display, pixmap, pixmap, &mut color, &mut color, 0, 0);
+            if cursor == 0 {
+                (xlib.XFreePixmap)(display, pixmap);
+                (xlib.XCloseDisplay)(display);
+                return None;
+            }
+            (xlib.XDefineCursor)(display, root_window, cursor);
+            (xlib.XFlush)(display);
+
+            Some(Self {
+                xlib,
+                display,
+                root_window,
+                cursor,
+                pixmap,
+            })
+        }
+    }
+}
+
+impl Drop for X11CursorState {
+    fn drop(&mut self) {
+        unsafe {
+            (self.xlib.XUndefineCursor)(self.display, self.root_window);
+            (self.xlib.XFreeCursor)(self.display, self.cursor);
+            (self.xlib.XFreePixmap)(self.display, self.pixmap);
+            (self.xlib.XCloseDisplay)(self.display);
+        }
+    }
+}
+
 /// Captures local keyboard and mouse input. The production `InputSource`.
 #[derive(Debug)]
 pub struct LinuxSource {
     events: mpsc::Receiver<InputEvent>,
     suppressed: Arc<AtomicBool>,
+    // RAII guard for the hidden X11 cursor. Dropping this restores the normal cursor.
+    x11_state: Option<X11CursorState>,
 }
 
 impl LinuxSource {
@@ -93,7 +188,11 @@ impl LinuxSource {
         if readers == 0 {
             return Err(LinuxInputError::NoDevices);
         }
-        Ok(Self { events, suppressed })
+        Ok(Self {
+            events,
+            suppressed,
+            x11_state: None,
+        })
     }
 }
 
@@ -109,7 +208,14 @@ impl InputSource for LinuxSource {
     }
 
     fn set_suppressed(&mut self, suppressed: bool) {
-        self.suppressed.store(suppressed, Ordering::Relaxed);
+        let was_suppressed = self.suppressed.swap(suppressed, Ordering::Relaxed);
+        if suppressed {
+            if !was_suppressed && self.x11_state.is_none() {
+                self.x11_state = X11CursorState::hide();
+            }
+        } else {
+            self.x11_state = None; // Dropping cleans up X11 cursor
+        }
     }
 }
 
@@ -513,5 +619,76 @@ pub fn primary_screen_size() -> Option<(u32, u32)> {
 
 /// The cursor position is owned by the display server, not evdev.
 pub fn cursor_position() -> Option<(i32, i32)> {
-    None
+    static WARN_ONCE: std::sync::Once = std::sync::Once::new();
+    let xlib = match get_xlib() {
+        Some(x) => x,
+        None => {
+            WARN_ONCE.call_once(|| {
+                tracing::warn!(
+                    "Failed to open X11 display for cursor position query. If running under Wayland, cursor synchronization requires XWayland compatibility."
+                );
+            });
+            return None;
+        }
+    };
+    unsafe {
+        let display = (xlib.XOpenDisplay)(std::ptr::null());
+        if display.is_null() {
+            WARN_ONCE.call_once(|| {
+                tracing::warn!(
+                    "Failed to open X11 display for cursor position query. If running under Wayland, cursor synchronization requires XWayland compatibility."
+                );
+            });
+            return None;
+        }
+
+        let root_window = (xlib.XDefaultRootWindow)(display);
+        let mut root_return: x11_dl::xlib::Window = 0;
+        let mut child_return: x11_dl::xlib::Window = 0;
+        let mut root_x_return: std::os::raw::c_int = 0;
+        let mut root_y_return: std::os::raw::c_int = 0;
+        let mut win_x_return: std::os::raw::c_int = 0;
+        let mut win_y_return: std::os::raw::c_int = 0;
+        let mut mask_return: std::os::raw::c_uint = 0;
+
+        let result = (xlib.XQueryPointer)(
+            display,
+            root_window,
+            &mut root_return,
+            &mut child_return,
+            &mut root_x_return,
+            &mut root_y_return,
+            &mut win_x_return,
+            &mut win_y_return,
+            &mut mask_return,
+        );
+
+        (xlib.XCloseDisplay)(display);
+
+        if result != 0 {
+            Some((root_x_return as i32, root_y_return as i32))
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_x11_cursor_state_graceful_fallback() {
+        // Calling hide() will either succeed (returning Some if X11 is running)
+        // or fail (returning None if X11 is not running / headless / Wayland)
+        // but it must NOT panic.
+        let _state = X11CursorState::hide();
+    }
+
+    #[test]
+    fn test_cursor_position_graceful_fallback() {
+        // Calling cursor_position() should not panic on any environment.
+        // It returns Some(pos) under native X11/XWayland, or None under headless/pure Wayland.
+        let _pos = cursor_position();
+    }
 }

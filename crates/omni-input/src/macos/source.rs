@@ -28,8 +28,12 @@ use std::thread::JoinHandle;
 // Re-enabling a tap the OS disabled (e.g. after a slow-callback timeout) needs
 // the raw C call; the safe wrapper only exposes `enable` on the owning struct,
 // which the callback cannot reach.
+#[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    fn CGMainDisplayID() -> u32;
+    fn CGDisplayHideCursor(display: u32) -> i32;
+    fn CGDisplayShowCursor(display: u32) -> i32;
 }
 
 /// The marker we stamp on events *we* inject (see the sink), so the tap can
@@ -90,7 +94,18 @@ impl InputSource for MacosSource {
     }
 
     fn set_suppressed(&mut self, suppressed: bool) {
-        self.suppressed.store(suppressed, Ordering::Relaxed);
+        let old = self.suppressed.swap(suppressed, Ordering::Relaxed);
+        if suppressed && !old {
+            unsafe {
+                let main_display = CGMainDisplayID();
+                CGDisplayHideCursor(main_display);
+            }
+        } else if !suppressed && old {
+            unsafe {
+                let main_display = CGMainDisplayID();
+                CGDisplayShowCursor(main_display);
+            }
+        }
     }
 }
 
@@ -104,6 +119,11 @@ impl Drop for MacosSource {
         }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
+        }
+        // Unconditionally show the cursor just in case it was left hidden
+        unsafe {
+            let main_display = CGMainDisplayID();
+            CGDisplayShowCursor(main_display);
         }
     }
 }
