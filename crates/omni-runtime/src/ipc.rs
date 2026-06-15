@@ -30,6 +30,9 @@ pub enum Request {
         host: Option<String>,
         edge: Option<String>,
     },
+    /// Turn opt-in clipboard sharing on or off at runtime. The choice is
+    /// persisted to the config so it survives a daemon restart.
+    Clipboard { enabled: bool },
 }
 
 /// The daemon's answer.
@@ -54,6 +57,9 @@ pub struct StatusInfo {
     /// permission for capture is missing or the capture thread died).
     #[serde(default)]
     pub capturing: bool,
+    /// Whether opt-in clipboard sharing is currently on.
+    #[serde(default)]
+    pub clipboard_sharing: bool,
     /// Active sessions.
     pub sessions: Vec<SessionInfo>,
     /// Incoming requests awaiting `omni accept` / `omni reject`.
@@ -111,6 +117,7 @@ mod tests {
             Request::RemovePeer {
                 selector: "laptop".into(),
             },
+            Request::Clipboard { enabled: true },
         ];
         for request in requests {
             let line = serde_json::to_string(&request).unwrap();
@@ -126,6 +133,7 @@ mod tests {
             fingerprint: "ab".repeat(32),
             port: 4733,
             capturing: true,
+            clipboard_sharing: true,
             sessions: vec![SessionInfo {
                 host: "10.0.0.2".into(),
                 fingerprint: "cd".repeat(32),

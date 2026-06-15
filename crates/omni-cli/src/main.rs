@@ -55,6 +55,12 @@ enum Command {
         host: Option<String>,
         edge: Option<String>,
     },
+    /// Turn clipboard sharing on or off. Off by default; the choice is saved
+    /// and applies the next time the daemon starts too.
+    Clipboard {
+        #[command(subcommand)]
+        action: ClipboardAction,
+    },
     /// Check that the OS permissions and environment the daemon needs are in place.
     Doctor,
     /// Update omni to the latest release.
@@ -70,6 +76,14 @@ enum Command {
 enum PeersAction {
     /// Remove a peer from the trusted list.
     Remove { host: String },
+}
+
+#[derive(Subcommand)]
+enum ClipboardAction {
+    /// Share clipboard copies with connected peers.
+    On,
+    /// Stop sharing the clipboard.
+    Off,
 }
 
 fn main() -> ExitCode {
@@ -140,6 +154,15 @@ fn main() -> ExitCode {
             action: Some(PeersAction::Remove { host }),
         } => simple(Request::RemovePeer { selector: host }, "removed"),
         Command::Layout { host, edge } => layout(host, edge),
+        Command::Clipboard { action } => {
+            let enabled = matches!(action, ClipboardAction::On);
+            let done = if enabled {
+                "clipboard sharing on"
+            } else {
+                "clipboard sharing off"
+            };
+            simple(Request::Clipboard { enabled }, done)
+        }
         Command::Doctor => doctor(),
         Command::Update => update::update(request),
         Command::Uninstall => uninstall(),
@@ -238,6 +261,14 @@ fn print_status(status: &StatusInfo) {
     if !status.capturing {
         println!("input capture: unavailable — target only (run `omni doctor`)");
     }
+    println!(
+        "clipboard sharing: {}",
+        if status.clipboard_sharing {
+            "on"
+        } else {
+            "off"
+        }
+    );
     if status.sessions.is_empty() {
         println!("sessions: none");
     } else {
