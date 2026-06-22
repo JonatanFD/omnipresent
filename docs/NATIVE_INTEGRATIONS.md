@@ -179,11 +179,53 @@ A **window plus a tray / menu-bar entry**:
   **accept/reject prompt even when the window is closed** — a security decision
   point cannot depend on the window being open (constraint 10).
 
+## Client implementation strategy
+
+How to reconcile a Rust core with native UIs in Swift and C#. There are three
+shapes: (1) two separate native apps that each speak the IPC; (2) a shared Rust
+client library exposed over a C ABI and called from Swift/C# via FFI (UniFFI,
+interoptopus, csbindgen); (3) one cross-platform Rust GUI (rejected — not native).
+
+The choice between (1) and (2) turns on **how much logic the client carries**, and
+by design ours carries almost none: the daemon does all the work (networking,
+trust, discovery, pairing, reconnection), so a client only opens the socket/pipe,
+writes a JSON line, reads JSON lines, and renders (constraint 2). That makes
+**option (1) the right call** — FFI's cost (xcframework/DLL build wiring,
+async event streams across the FFI boundary, manual memory management) is not
+worth sharing such a thin client.
+
+The decision, then:
+
+1. **All logic lives in the daemon (Rust).** This includes the new connection
+   features: the pairing code is **generated and resolved in the daemon**
+   (`GenerateCode` / `ConnectByCode`), so a client only passes the string through;
+   discovery, fingerprint verification, and reconnection are likewise daemon-side.
+   A client never encodes/decodes or decides anything.
+2. **The thin IPC client is written natively per platform** — it is small and
+   first-class on both: a Unix-domain socket + `Codable` on macOS (Swift), a
+   `NamedPipeClientStream` + `System.Text.Json` on Windows (C#).
+3. **Protocol types are generated from Rust to avoid drift.** The only thing
+   clients share is the *shape* of `Request` / `Response` / `Event`. Rather than
+   hand-maintaining it in three languages, generate the native types from the
+   definitions in `omni-runtime/src/ipc.rs` — `typeshare` for Swift, and
+   `schemars` (Rust → JSON Schema) + quicktype (or a typeshare fork) for C#. The
+   Rust structs stay the single source of truth, with no binary coupling.
+4. **FFI (a shared Rust client lib) is reserved for later** — only if client-side
+   logic ever grows non-trivial. The constraints above are designed to keep that
+   from happening (the daemon is what thinks).
+
+In one line: it is not "Swift + C#" *versus* "Rust" — it is **logic in Rust
+(daemon), UI native per platform, protocol types codegen'd from Rust**; the thin
+client is reimplemented per platform because that is cheap, and is not shared over
+FFI because there is too little logic to share.
+
 ## Phased plan
 
 1. **Event channel + protocol version (daemon, Rust).** `Request::Subscribe`, an
-   `Event` enum, and a version handshake. Test-first. Unblocks both GUIs and
-   improves the CLI.
+   `Event` enum, and a version handshake. Define these types so they are
+   **codegen-friendly** (e.g. derive `schemars`/`typeshare` on the protocol
+   types) so native clients can generate matching structs. Test-first. Unblocks
+   both GUIs and improves the CLI.
 2. **Connection backend (daemon, Rust).** mDNS advertise/browse, machine name in
    config, pairing-code generate/parse with fingerprint verification, and the IPC
    surface for all three. Mirrored in the CLI.
