@@ -124,6 +124,24 @@ The same rule reaches the visual layout editor: it uses each platform's native
 drag-and-drop idioms, not a bespoke canvas. Shared identity comes from **behavior**
 (same features over the same protocol), not from pixels.
 
+### Testing & stability
+
+Stability is a priority: an interface that is not tested is not done. This extends
+the project's TDD rule to the native clients, which live outside the Cargo
+workspace and would otherwise escape it.
+
+20. **Every interface is tested.** Each client of the daemon — the CLI and each
+    native GUI — carries its own automated tests. At minimum: unit tests for the
+    IPC client and the protocol's (de)serialization, plus integration/UI tests for
+    the critical flows (connect, accept/reject, layout, clipboard, and the
+    reconnection state the UI surfaces). macOS uses XCTest / XCUITest; Windows uses
+    a standard .NET test framework (xUnit / NUnit / MSTest) with WinAppDriver for
+    UI flows; the Rust side keeps its existing `cargo test` gate.
+21. **Tests run in CI per platform and gate every change.** Each client's CI job
+    runs its tests on every change, mirroring the Rust quality gate (fmt · lint ·
+    test). A change does not merge with failing or missing tests, and stability is
+    favored over feature velocity — no flaky or untested interface ships.
+
 ## IPC evolution: a live event channel
 
 The current IPC is request → response with no push. A responsive, *lightweight*
