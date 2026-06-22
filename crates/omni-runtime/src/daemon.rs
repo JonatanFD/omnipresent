@@ -11,7 +11,10 @@
 //! - **IPC**: a Unix socket in the config dir serves the `omni` CLI.
 
 use crate::config::{Config, Paths};
-use crate::ipc::{LayoutInfo, PeerInfo, PendingInfo, Request, Response, SessionInfo, StatusInfo};
+use crate::ipc::{
+    Event, LayoutInfo, PROTOCOL_VERSION, PeerInfo, PendingInfo, Request, Response, SessionInfo,
+    StatusInfo,
+};
 use crate::ipc_transport::{IpcListener, IpcStream};
 use crate::ratelimit::RateLimiter;
 use crate::trust::{TrustState, peer_id_of};
@@ -126,6 +129,11 @@ struct Shared {
     /// Wakes or parks the clipboard polling task when sharing is toggled. The
     /// task idles for free while off (the default), so the opt-in costs nothing.
     clipboard_on: watch::Sender<bool>,
+    /// Bumped whenever observable state changes (a session, a pending request,
+    /// the active target, clipboard, or layout). Subscribers (`Request::Subscribe`)
+    /// wake on the change and re-read a fresh `StatusInfo`. The value is just a
+    /// counter; only "it changed" matters, and `watch` coalesces bursts.
+    changes: watch::Sender<u64>,
     shutdown: tokio::sync::Notify,
 }
 
@@ -218,6 +226,7 @@ pub fn run_with_paths(paths: Paths) -> Result<(), DaemonError> {
         };
         let (suppress_tx, suppress_rx) = watch::channel(false);
         let (clipboard_on_tx, clipboard_on_rx) = watch::channel(config.clipboard_sharing_enabled);
+        let (changes_tx, _) = watch::channel(0u64);
 
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
@@ -243,6 +252,7 @@ pub fn run_with_paths(paths: Paths) -> Result<(), DaemonError> {
                 config.clipboard_sharing_enabled,
             ),
             clipboard_on: clipboard_on_tx,
+            changes: changes_tx,
             shutdown: tokio::sync::Notify::new(),
         });
         rebuild_layout(&mut shared.lock(), &shared);
@@ -425,19 +435,21 @@ fn run_capture(shared: Arc<Shared>, mut source: OsSource, suppress_rx: watch::Re
 /// One captured event: track the cursor, detect crossings, forward to the
 /// active remote peer.
 fn route_captured(shared: &Arc<Shared>, event: InputEvent) {
-    let mut state = shared.lock();
-    match state.sessions.active_target() {
-        ActiveTarget::Local => {
-            if let InputEvent::Motion(delta) = event {
-                sync_cursor_to_os(&mut state, shared);
-                advance_cursor(&mut state, shared, delta);
+    let mut crossed = false;
+    {
+        let mut state = shared.lock();
+        match state.sessions.active_target() {
+            ActiveTarget::Local => {
+                if let InputEvent::Motion(delta) = event {
+                    sync_cursor_to_os(&mut state, shared);
+                    crossed = advance_cursor(&mut state, shared, delta);
+                }
+                // Non-motion local input is none of our business.
             }
-            // Non-motion local input is none of our business.
-        }
-        ActiveTarget::Remote(peer) => {
-            match event {
+            ActiveTarget::Remote(peer) => match event {
                 InputEvent::Motion(delta) => {
-                    if !advance_cursor(&mut state, shared, delta) {
+                    crossed = advance_cursor(&mut state, shared, delta);
+                    if !crossed {
                         // Still on the remote screen: send the cursor's absolute
                         // position on that screen, not the raw delta. The
                         // virtual desktop already mapped it into the peer's
@@ -455,10 +467,14 @@ fn route_captured(shared: &Arc<Shared>, event: InputEvent) {
                     }
                 }
                 other => forward_to(&state, peer, other),
-            }
+            },
         }
+        shared.sync_suppression(&state);
     }
-    shared.sync_suppression(&state);
+    // A crossing flips which machine has input — surface that to subscribers.
+    if crossed {
+        notify_change(shared);
+    }
 }
 
 /// While input is local the OS owns the real cursor (acceleration and all);
@@ -614,6 +630,7 @@ async fn handle_incoming(shared: Arc<Shared>, connection: QuicConnection) {
             fingerprint,
             decision: decision_tx,
         });
+        notify_change(&shared);
         let approved = matches!(
             tokio::time::timeout(ACCEPT_TIMEOUT, decision_rx).await,
             Ok(Ok(true))
@@ -623,6 +640,7 @@ async fn handle_incoming(shared: Arc<Shared>, connection: QuicConnection) {
             .lock()
             .pending
             .retain(|p| p.fingerprint != fingerprint);
+        notify_change(&shared);
         if !approved {
             let _ = control
                 .send(&Message::Control(ControlMessage::Reject {
@@ -678,6 +696,7 @@ async fn handle_incoming(shared: Arc<Shared>, connection: QuicConnection) {
         connection.close();
         return;
     }
+    notify_change(&shared);
 
     let accept = Message::Control(ControlMessage::Accept {
         session,
@@ -776,6 +795,7 @@ async fn do_connect(shared: &Arc<Shared>, host_arg: &str) -> Result<(), String> 
         );
         rebuild_layout(&mut state, shared);
     }
+    notify_change(shared);
 
     tracing::info!(%host, %fingerprint, "session established (controller)");
     let task_shared = shared.clone();
@@ -1013,12 +1033,22 @@ fn warp(shared: &Shared, x: i32, y: i32) {
 }
 
 fn cleanup_peer(shared: &Arc<Shared>, machine: MachineId) {
-    let mut state = shared.lock();
-    if let Some(link) = state.links.remove(&machine) {
-        let _ = state.sessions.close(link.session);
+    {
+        let mut state = shared.lock();
+        if let Some(link) = state.links.remove(&machine) {
+            let _ = state.sessions.close(link.session);
+        }
+        rebuild_layout(&mut state, shared);
+        shared.sync_suppression(&state);
     }
-    rebuild_layout(&mut state, shared);
-    shared.sync_suppression(&state);
+    notify_change(shared);
+}
+
+/// Signals subscribers that observable state changed, so a `Request::Subscribe`
+/// connection re-reads and pushes a fresh status. Safe to call whether or not the
+/// caller holds the state lock — it only bumps a counter, never locks state.
+fn notify_change(shared: &Shared) {
+    shared.changes.send_modify(|n| *n = n.wrapping_add(1));
 }
 
 fn disconnect_all(shared: &Arc<Shared>) {
@@ -1037,6 +1067,12 @@ async fn handle_client(shared: Arc<Shared>, stream: IpcStream) {
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let request = serde_json::from_str::<Request>(&line);
+        // A subscription turns this connection into a one-way event stream until
+        // the client disconnects, so it never returns to the request loop.
+        if matches!(request, Ok(Request::Subscribe)) {
+            stream_events(&shared, &mut write, &mut lines).await;
+            return;
+        }
         let stopping = matches!(request, Ok(Request::Stop));
         let response = match request {
             Ok(request) => dispatch(&shared, request).await,
@@ -1059,8 +1095,62 @@ async fn handle_client(shared: Arc<Shared>, stream: IpcStream) {
     }
 }
 
+/// Drives a `Request::Subscribe` connection: pushes an initial status snapshot,
+/// then a fresh one every time state changes, until the client disconnects.
+/// Reads are only used to detect that disconnect — a subscription is push-only.
+async fn stream_events<W, R>(shared: &Arc<Shared>, write: &mut W, lines: &mut tokio::io::Lines<R>)
+where
+    W: tokio::io::AsyncWrite + Unpin,
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    let mut changes = shared.changes.subscribe();
+    if !write_event(write, &Event::Status(status(shared))).await {
+        return;
+    }
+    loop {
+        tokio::select! {
+            changed = changes.changed() => {
+                if changed.is_err() {
+                    break; // the daemon is shutting down
+                }
+                if !write_event(write, &Event::Status(status(shared))).await {
+                    break; // client gone
+                }
+            }
+            line = lines.next_line() => match line {
+                // Stray input on a subscription is ignored; EOF/error means the
+                // client disconnected.
+                Ok(Some(_)) => {}
+                _ => break,
+            },
+        }
+    }
+}
+
+/// Writes one event as a JSON line. Returns `false` if the write failed (the
+/// client is gone), so the caller can stop.
+async fn write_event<W>(write: &mut W, event: &Event) -> bool
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let Ok(mut payload) = serde_json::to_vec(event) else {
+        return false;
+    };
+    payload.push(b'\n');
+    write.write_all(&payload).await.is_ok()
+}
+
 async fn dispatch(shared: &Arc<Shared>, request: Request) -> Response {
     match request {
+        Request::Hello => Response::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            daemon_version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+        // Subscribe is handled at the connection level (it streams, not a single
+        // reply); this arm only keeps the match exhaustive and is never reached.
+        Request::Subscribe => Response::Error {
+            message: "subscribe is handled at the connection level".into(),
+        },
         Request::Status => Response::Status(status(shared)),
         Request::Stop => Response::Ok,
         Request::Connect { host } => match do_connect(shared, &host).await {
@@ -1174,6 +1264,7 @@ fn set_layout(shared: &Arc<Shared>, host: &str, edge: &str) -> Response {
             shared.sync_suppression(&state);
         }
     }
+    notify_change(shared);
 
     // Persist to the config file (merging into whatever else is there).
     match Config::load(&shared.paths) {
@@ -1202,6 +1293,7 @@ fn set_clipboard(shared: &Arc<Shared>, enabled: bool) -> Response {
     // The task may have ended already (shutdown); the guard above is what
     // actually gates sharing, so a failed wake is harmless.
     let _ = shared.clipboard_on.send(enabled);
+    notify_change(shared);
 
     match Config::load(&shared.paths) {
         Ok(mut config) => {
@@ -1263,6 +1355,7 @@ fn decide_pending(shared: &Arc<Shared>, selector: &str, approve: bool) -> Respon
         Some(index) => {
             let pending = state.pending.remove(index);
             let _ = pending.decision.send(approve);
+            notify_change(shared);
             Response::Ok
         }
         None => Response::Error {
