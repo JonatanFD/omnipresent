@@ -1123,7 +1123,7 @@ dependencies = [
 
 [[package]]
 name = "omni-cli"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "clap",
  "omni-runtime",
@@ -1133,7 +1133,7 @@ dependencies = [
 
 [[package]]
 name = "omni-clipboard"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "arboard",
  "omni-protocol",
@@ -1145,7 +1145,7 @@ dependencies = [
 
 [[package]]
 name = "omni-input"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "core-foundation",
  "core-graphics",
@@ -1158,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "omni-protocol"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "postcard",
  "serde",
@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "omni-runtime"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "dirs",
  "omni-clipboard",
@@ -1187,7 +1187,7 @@ dependencies = [
 
 [[package]]
 name = "omni-security"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "omni-protocol",
  "rcgen",
@@ -1197,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "omni-session"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "omni-protocol",
  "omni-topology",
@@ -1205,7 +1205,7 @@ dependencies = [
 
 [[package]]
 name = "omni-topology"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "omni-protocol",
  "serde",
@@ -1213,7 +1213,7 @@ dependencies = [
 
 [[package]]
 name = "omni-transport"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "bytes",
  "omni-protocol",
