@@ -27,6 +27,15 @@ use tokio::sync::mpsc;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const KEEP_ALIVE: Duration = Duration::from_secs(5);
 
+/// How many bytes of unsent input datagrams quinn may buffer. Input is
+/// real-time: when the link congests, a fresh cursor position makes every
+/// older one stale, so a deep queue only adds lag. quinn's `send_datagram`
+/// drops the oldest buffered datagrams to admit a new one, so a shallow buffer
+/// bounds the worst-case cursor lag to a few packets instead of the 1 MiB
+/// default (tens of thousands of stale positions). A Protocol input message is
+/// only tens of bytes, so this still holds a healthy burst.
+const DATAGRAM_SEND_BUFFER: usize = 16 * 1024;
+
 /// The largest control frame we will read. Session signalling is tiny, but the
 /// control stream also carries clipboard payloads — including images, which are
 /// far bigger than a control message — so the limit must admit a full clipboard
@@ -90,6 +99,12 @@ fn transport_config() -> Arc<quinn::TransportConfig> {
     config.max_idle_timeout(Some(
         quinn::IdleTimeout::try_from(IDLE_TIMEOUT).expect("idle timeout fits a varint"),
     ));
+    // Keep the input (datagram) path tuned for latency, not throughput.
+    config.datagram_send_buffer_size(DATAGRAM_SEND_BUFFER);
+    // BBR keeps the bottleneck queue (and thus added latency) small under
+    // competing traffic, where the default loss-based controller lets a queue
+    // build up first — exactly the high-traffic case that lagged the cursor.
+    config.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
     Arc::new(config)
 }
 

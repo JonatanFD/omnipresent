@@ -5,8 +5,18 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-21 (clipboard **image** sharing now works between two
-machines. Images travel on the reliable control stream, but that stream capped
+_Last updated: 2026-06-22 (input path tuned for latency under network
+congestion. Cursor motion is sent as absolute positions on unreliable
+datagrams; on a congested or busy link a backlog of stale positions used to
+queue and replay, so the remote cursor visibly lagged. The peer task now
+**coalesces** a run of queued positions down to the most recent before sending
+(clicks, keys, and scrolls are order-sensitive, so they are never dropped and
+they break a run), quinn's datagram send buffer is shallow (it drops the oldest
+stale positions to admit a fresh one), and the connection uses the **BBR**
+congestion controller to keep the bottleneck queue — and the added latency —
+small. Automatic reconnection on a dropped link is the next piece. Earlier the
+same day: clipboard **image** sharing now works between two machines. Images
+travel on the reliable control stream, but that stream capped
 every frame at 64 KiB — fine for tiny signalling, far too small for a
 screenshot's raw RGBA bytes — so the receiver rejected the frame as
 `ControlFrameTooLarge` and tore the session down the moment an image was copied.
@@ -69,8 +79,8 @@ and `cargo test` (98 tests), including on Windows.
 | `omni-session`   | **Implemented** | Session lifecycle, dynamic roles, active-target routing, `SessionEvents` port. 12 tests. |
 | `omni-input`     | **Implemented** | Ports, in-memory adapters, permission diagnostics, and the real OS adapters: macOS (CGEvent tap + post; the sink warps the cursor so a remote-driven move stays visible), Linux (evdev + uinput), and Windows (low-level hooks + SendInput; the local cursor is parked, not hidden). Cursor **hiding** on suppression where it is safe and self-restoring (macOS `CGDisplayHideCursor`, Linux X11 empty-cursor on the root window) and true Linux cursor-position query (`XQueryPointer`). 13 tests. |
 | `omni-clipboard` | **Implemented** | Opt-in clipboard sharing (text + images) over a ports-and-adapters design: `arboard` adapter, in-memory mock, echo-loop guard, strict opt-in toggle queryable at runtime. 8 tests. |
-| `omni-transport` | **Implemented** | `SecureChannel` port, framing, loopback channel, and the real QUIC adapter (quinn + rustls, mTLS, TOFU verifiers, datagrams + control stream). The control-frame limit admits a full clipboard payload so images sync over the reliable stream. 13 tests. |
-| `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, cross-platform IPC (Unix socket / Windows named pipe), heartbeats, configurable layout, opt-in clipboard sync over the control stream (toggleable at runtime and persisted), doctor checks, and the composition root that runs the pipelines. 21 tests + a two-daemon integration test. |
+| `omni-transport` | **Implemented** | `SecureChannel` port, framing, loopback channel, and the real QUIC adapter (quinn + rustls, mTLS, TOFU verifiers, datagrams + control stream). The control-frame limit admits a full clipboard payload so images sync over the reliable stream. The input path is tuned for latency: a shallow datagram send buffer (drops oldest stale positions) and the BBR congestion controller. 13 tests. |
+| `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, cross-platform IPC (Unix socket / Windows named pipe), heartbeats, configurable layout, opt-in clipboard sync over the control stream (toggleable at runtime and persisted), doctor checks, and the composition root that runs the pipelines. The peer task coalesces a backlog of queued cursor positions to the latest one (keeping clicks/keys/scrolls intact) so a congested link does not make the cursor lag. 25 tests + a two-daemon integration test. |
 | `omni-cli`       | **Implemented** | The full `omni` binary: start/stop/status, doctor, connect/disconnect, accept/reject, peers (+ remove), layout, clipboard on/off, uninstall, over the daemon's Unix socket. |
 
 ### What `omni-protocol` provides
@@ -284,11 +294,16 @@ against ports using in-memory adapters.
 
 Everything below is known, deliberate, and ordered roughly by importance:
 
-- **Live two-machine validation.** The full pipeline compiles, is unit-tested,
-  and is exercised end-to-end *within one host* by the daemon integration test,
-  but `omni connect` between two real machines (macOS ↔ Linux ↔ Windows) has not
-  been run yet. This is the next step, and will likely shake out small bugs in
-  edge-crossing feel, warp coordinates, and reconnect behaviour.
+- **Automatic reconnection.** `omni connect` between two real machines
+  (Windows ↔ macOS) is validated and works, including clipboard. What is missing
+  is recovery from a *dropped* link: when the connection fails (network blip,
+  idle timeout, peer restart) the session is torn down and the user must
+  reconnect by hand. The intended behaviour is for the dialing side (Controller)
+  to retry with exponential backoff until the peer returns or the user runs
+  `omni disconnect`. This is the active next piece of work.
+- **Linux live run.** macOS ↔ Linux ↔ Windows triangles have not been run; the
+  Linux adapters build and unit-test but are not exercised on real hardware
+  (see also "Linux clipboard sharing").
 - **`omni start` is plain detach.** No launchd/systemd/Windows-service files
   yet, so the daemon does not survive a reboot or restart on crash.
 - **Linux and Windows are not hardware-tested.** The evdev/uinput adapters and
