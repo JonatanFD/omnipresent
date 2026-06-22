@@ -51,6 +51,7 @@ const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(8);
 const CLIPBOARD_POLL: Duration = Duration::from_millis(500);
 
 /// Something a peer task is asked to do.
+#[derive(Debug, PartialEq)]
 enum PeerCommand {
     /// Forward one input event as an unreliable datagram.
     Input(InputEvent),
@@ -853,27 +854,54 @@ async fn run_peer(
     loop {
         let liveness = tokio::time::sleep_until(deadline);
         tokio::select! {
-            command = commands.recv() => match command {
-                Some(PeerCommand::Input(event)) => {
-                    let message = Message::Input { session, event };
-                    if let Err(TransportError::Channel(e)) = transport.send(&message) {
-                        tracing::debug!(%e, "datagram send failed");
-                    }
-                }
-                Some(PeerCommand::Warp { x, y }) => {
-                    let message = Message::Control(ControlMessage::CursorWarp { session, x, y });
-                    if control_tx.send(&message).await.is_err() {
-                        break;
-                    }
-                }
-                Some(PeerCommand::Clipboard(data)) => {
-                    if control_tx.send(&Message::Clipboard(data)).await.is_err() {
-                        break;
-                    }
-                }
-                Some(PeerCommand::Disconnect) | None => {
+            command = commands.recv() => {
+                let Some(first) = command else {
+                    // The channel closed: the session is going away.
                     let goodbye = Message::Control(ControlMessage::Disconnect { session });
                     let _ = control_tx.send(&goodbye).await;
+                    break;
+                };
+                // Drain everything queued right now and collapse runs of cursor
+                // motion into the latest position. Under congestion the channel
+                // backs up with stale absolute positions; sending them all would
+                // only make the cursor lag behind the real one.
+                let mut batch = vec![first];
+                while let Ok(next) = commands.try_recv() {
+                    batch.push(next);
+                }
+                let mut closing = false;
+                for command in coalesce_motion(batch) {
+                    match command {
+                        PeerCommand::Input(event) => {
+                            let message = Message::Input { session, event };
+                            if let Err(TransportError::Channel(e)) = transport.send(&message) {
+                                tracing::debug!(%e, "datagram send failed");
+                            }
+                        }
+                        PeerCommand::Warp { x, y } => {
+                            let message =
+                                Message::Control(ControlMessage::CursorWarp { session, x, y });
+                            if control_tx.send(&message).await.is_err() {
+                                closing = true;
+                                break;
+                            }
+                        }
+                        PeerCommand::Clipboard(data) => {
+                            if control_tx.send(&Message::Clipboard(data)).await.is_err() {
+                                closing = true;
+                                break;
+                            }
+                        }
+                        PeerCommand::Disconnect => {
+                            let goodbye =
+                                Message::Control(ControlMessage::Disconnect { session });
+                            let _ = control_tx.send(&goodbye).await;
+                            closing = true;
+                            break;
+                        }
+                    }
+                }
+                if closing {
                     break;
                 }
             },
@@ -940,6 +968,30 @@ async fn run_peer(
     transport.channel().close();
     cleanup_peer(&shared, machine);
     tracing::info!(machine = machine.value(), "session closed");
+}
+
+/// Collapses runs of consecutive cursor-position updates into just the most
+/// recent one. The cursor position is absolute, so once a newer position
+/// exists every older one in the backlog is stale and worth dropping — sending
+/// them would only make the remote cursor trail behind. Keys, clicks, and
+/// scrolls are order-sensitive (a click must land where it was made), so they
+/// are never dropped and they break a run of pointer updates.
+fn coalesce_motion(batch: Vec<PeerCommand>) -> Vec<PeerCommand> {
+    let mut out: Vec<PeerCommand> = Vec::with_capacity(batch.len());
+    for command in batch {
+        let is_pointer = matches!(command, PeerCommand::Input(InputEvent::Pointer { .. }));
+        let prev_is_pointer = matches!(
+            out.last(),
+            Some(PeerCommand::Input(InputEvent::Pointer { .. }))
+        );
+        if is_pointer && prev_is_pointer {
+            // Replace the stale position with this fresher one.
+            *out.last_mut().expect("checked non-empty above") = command;
+        } else {
+            out.push(command);
+        }
+    }
+    out
 }
 
 fn inject(shared: &Shared, event: InputEvent) {
@@ -1268,4 +1320,52 @@ fn list_peers(shared: &Arc<Shared>) -> Vec<PeerInfo> {
             fingerprint: record.fingerprint,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use omni_protocol::{Action, MouseButton};
+
+    fn pointer(x: i32, y: i32) -> PeerCommand {
+        PeerCommand::Input(InputEvent::Pointer { x, y })
+    }
+
+    fn click() -> PeerCommand {
+        PeerCommand::Input(InputEvent::Button {
+            button: MouseButton::Left,
+            action: Action::Press,
+        })
+    }
+
+    #[test]
+    fn a_run_of_positions_collapses_to_the_latest() {
+        let out = coalesce_motion(vec![pointer(1, 1), pointer(2, 2), pointer(3, 3)]);
+        assert_eq!(out, vec![pointer(3, 3)]);
+    }
+
+    #[test]
+    fn clicks_are_kept_and_break_the_run_so_they_land_in_place() {
+        // pointer→pointer→click→pointer→pointer must keep the click at the
+        // position it was made, then collapse the positions on each side.
+        let out = coalesce_motion(vec![
+            pointer(1, 1),
+            pointer(2, 2),
+            click(),
+            pointer(3, 3),
+            pointer(4, 4),
+        ]);
+        assert_eq!(out, vec![pointer(2, 2), click(), pointer(4, 4)]);
+    }
+
+    #[test]
+    fn non_motion_commands_pass_through_untouched() {
+        let out = coalesce_motion(vec![click(), click()]);
+        assert_eq!(out, vec![click(), click()]);
+    }
+
+    #[test]
+    fn an_empty_batch_stays_empty() {
+        assert_eq!(coalesce_motion(vec![]), vec![]);
+    }
 }
