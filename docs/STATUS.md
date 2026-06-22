@@ -320,6 +320,17 @@ Everything below is known, deliberate, and ordered roughly by importance:
   backends are not enabled or exercised — wiring and verifying Linux clipboard
   (text and image) is the remaining clipboard work.
 
+## Planned: native GUI clients
+
+A native **macOS** (Swift/SwiftUI) and **Windows** (C#/WinUI 3) GUI are planned,
+each a thin client of the daemon's existing local IPC — no changes to the core
+crates. The design, the binding constraints (GUI-only exception to Rust-only,
+discovery/pairing never bypass accept+TOFU, daemon owns all state), the feature
+inventory, and the phased plan live in
+[`NATIVE_INTEGRATIONS.md`](NATIVE_INTEGRATIONS.md). First piece of work is a
+live **event channel** + protocol version on the IPC (Rust); then an mDNS +
+pairing-code connection backend; then the two apps. Linux stays CLI-only.
+
 ## Open decisions
 
 - **Secure channel: decided — QUIC** (TLS 1.3 over UDP) via `quinn` + `rustls`,

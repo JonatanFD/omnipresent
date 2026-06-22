@@ -5,6 +5,10 @@ product scope and constraints in [`CLAUDE.md`](../CLAUDE.md) and the engineering
 rules in [`.claude/rules/constrains.md`](../.claude/rules/constrains.md)
 (Rust, DDD, SOLID, TDD).
 
+For how native graphical clients (macOS, Windows) plug into this design — they
+are just IPC clients of the daemon — and the constraints they must obey, see
+[`NATIVE_INTEGRATIONS.md`](NATIVE_INTEGRATIONS.md).
+
 ## Guiding principles
 
 - **DDD bounded contexts.** Each core module is a bounded context with its own
