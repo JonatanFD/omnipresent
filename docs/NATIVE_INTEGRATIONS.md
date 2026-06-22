@@ -88,6 +88,42 @@ These are binding rules for any native client.
 13. The GUI **surfaces `doctor`** (permissions/environment) so a user can fix, for
     example, a missing macOS Accessibility grant.
 
+### User interface
+
+The default — and the rule — is that **each platform follows its own operating
+system's design guidelines to the letter**. Cross-platform visual consistency is
+an explicit non-goal: the two apps are *meant* to look different, each at home on
+its OS.
+
+14. **Platform design language is mandatory.** macOS follows the **Apple Human
+    Interface Guidelines (HIG)**; Windows follows the **Fluent Design System** (via
+    WinUI 3). Each app must look and behave like a first-party app of its OS.
+15. **Native components only.** Build exclusively from the platform's stock
+    controls (SwiftUI/AppKit on macOS, WinUI 3 on Windows). No custom-drawn widgets
+    that imitate native ones, no third-party UI toolkits, no web views, no porting
+    one platform's controls to the other.
+16. **Customization is layout only.** The single permitted modification is
+    *arranging* native components to present omni's information. No restyling of
+    controls, no custom themes, colors, typography, spacing, icons, or animations —
+    nothing that overrides the system's own look.
+17. **System appearance and settings are honored automatically.** Light/dark mode,
+    accent color, Dynamic Type / text scaling, reduced motion, high contrast, and
+    right-to-left must all just work. Using unmodified native components is exactly
+    how that comes for free.
+18. **Structural conventions follow each OS.** Window chrome, the macOS menu bar vs
+    the Windows menu/command bar, the macOS menu-bar extra vs the Windows system
+    tray, standard sheets/dialogs, the settings surface (macOS Settings window /
+    Windows settings page), and notifications (User Notifications / Windows toasts)
+    each follow their platform's norm — never a port of the other's.
+19. **Accessibility and localization are not optional.** Full keyboard operability,
+    screen-reader labels (VoiceOver / Narrator), and adequate contrast are
+    required; unmodified native components are the way to get them. User-facing
+    strings are localizable.
+
+The same rule reaches the visual layout editor: it uses each platform's native
+drag-and-drop idioms, not a bespoke canvas. Shared identity comes from **behavior**
+(same features over the same protocol), not from pixels.
+
 ## IPC evolution: a live event channel
 
 The current IPC is request → response with no push. A responsive, *lightweight*
