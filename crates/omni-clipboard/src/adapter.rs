@@ -4,6 +4,11 @@ use arboard::Clipboard;
 use std::borrow::Cow;
 
 /// Production adapter implementing `ClipboardPort` using the `arboard` crate.
+///
+/// Text and image (RGBA) sync are validated on **Windows and macOS**, where
+/// `arboard` reads and writes both formats over the native pasteboard. **Linux
+/// is not supported yet:** image sync there is unverified and the X11/Wayland
+/// backends are not exercised — see `docs/STATUS.md` ("Not yet done").
 pub struct ArboardAdapter;
 
 impl ArboardAdapter {

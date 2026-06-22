@@ -5,7 +5,15 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-14 (clipboard sharing can now be toggled at runtime with
+_Last updated: 2026-06-21 (clipboard **image** sharing now works between two
+machines. Images travel on the reliable control stream, but that stream capped
+every frame at 64 KiB — fine for tiny signalling, far too small for a
+screenshot's raw RGBA bytes — so the receiver rejected the frame as
+`ControlFrameTooLarge` and tore the session down the moment an image was copied.
+The control-frame limit now admits a full clipboard payload (`MAX_CLIPBOARD_BYTES`
+plus framing overhead), so text and images both sync. Validated on Windows and
+macOS; Linux clipboard image sync is still unverified (see "Not yet done").
+Earlier: clipboard sharing can be toggled at runtime with
 `omni clipboard on|off` — the daemon flips the opt-in guard, wakes or parks the
 polling task, and persists the choice to the config so it survives a restart;
 `omni status` shows the current state. The poll task now parks for free while
@@ -61,7 +69,7 @@ and `cargo test` (98 tests), including on Windows.
 | `omni-session`   | **Implemented** | Session lifecycle, dynamic roles, active-target routing, `SessionEvents` port. 12 tests. |
 | `omni-input`     | **Implemented** | Ports, in-memory adapters, permission diagnostics, and the real OS adapters: macOS (CGEvent tap + post; the sink warps the cursor so a remote-driven move stays visible), Linux (evdev + uinput), and Windows (low-level hooks + SendInput; the local cursor is parked, not hidden). Cursor **hiding** on suppression where it is safe and self-restoring (macOS `CGDisplayHideCursor`, Linux X11 empty-cursor on the root window) and true Linux cursor-position query (`XQueryPointer`). 13 tests. |
 | `omni-clipboard` | **Implemented** | Opt-in clipboard sharing (text + images) over a ports-and-adapters design: `arboard` adapter, in-memory mock, echo-loop guard, strict opt-in toggle queryable at runtime. 8 tests. |
-| `omni-transport` | **Implemented** | `SecureChannel` port, framing, loopback channel, and the real QUIC adapter (quinn + rustls, mTLS, TOFU verifiers, datagrams + control stream). 12 tests. |
+| `omni-transport` | **Implemented** | `SecureChannel` port, framing, loopback channel, and the real QUIC adapter (quinn + rustls, mTLS, TOFU verifiers, datagrams + control stream). The control-frame limit admits a full clipboard payload so images sync over the reliable stream. 13 tests. |
 | `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, cross-platform IPC (Unix socket / Windows named pipe), heartbeats, configurable layout, opt-in clipboard sync over the control stream (toggleable at runtime and persisted), doctor checks, and the composition root that runs the pipelines. 21 tests + a two-daemon integration test. |
 | `omni-cli`       | **Implemented** | The full `omni` binary: start/stop/status, doctor, connect/disconnect, accept/reject, peers (+ remove), layout, clipboard on/off, uninstall, over the daemon's Unix socket. |
 
@@ -286,9 +294,11 @@ Everything below is known, deliberate, and ordered roughly by importance:
 - **Linux and Windows are not hardware-tested.** The evdev/uinput adapters and
   the Win32 hook/`SendInput` adapters build and unit-test, but have not run
   against real devices on a live desktop.
-- **Live clipboard validation.** Opt-in clipboard sharing is implemented and
-  unit-tested (see `omni-clipboard`), but text/image sync between two real
-  machines has not been exercised end-to-end yet.
+- **Linux clipboard sharing.** Text and image sync are validated between two
+  real machines on Windows and macOS. Linux is not supported yet: the `arboard`
+  adapter is built with `default-features = false`, so its X11/Wayland clipboard
+  backends are not enabled or exercised — wiring and verifying Linux clipboard
+  (text and image) is the remaining clipboard work.
 
 ## Open decisions
 
