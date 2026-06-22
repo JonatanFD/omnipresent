@@ -3,10 +3,23 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The IPC protocol version. A client sends [`Request::Hello`] first and compares
+/// the [`Response::Hello`] it gets back; if the daemon's version is newer than the
+/// client understands, the client tells the user to update rather than misbehave.
+/// Bump this only on a breaking change — additive `Request`/`Response`/`Event`
+/// variants and new optional fields stay backward-compatible and do not need it.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 /// A command from the CLI to the daemon.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
+    /// Version handshake: ask the daemon which protocol version it speaks.
+    Hello,
+    /// Subscribe to live updates. The connection stays open and the daemon
+    /// pushes [`Event`] lines as state changes, until the client disconnects.
+    /// Commands are sent on a separate connection.
+    Subscribe,
     /// Daemon and session overview.
     Status,
     /// Shut the daemon down.
@@ -40,10 +53,31 @@ pub enum Request {
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum Response {
     Ok,
-    Error { message: String },
+    Error {
+        message: String,
+    },
+    /// Answer to [`Request::Hello`]: the daemon's protocol and build versions.
+    Hello {
+        protocol_version: u32,
+        daemon_version: String,
+    },
     Status(StatusInfo),
-    Peers { peers: Vec<PeerInfo> },
-    Layout { placements: Vec<LayoutInfo> },
+    Peers {
+        peers: Vec<PeerInfo>,
+    },
+    Layout {
+        placements: Vec<LayoutInfo>,
+    },
+}
+
+/// A pushed update sent on a [`Request::Subscribe`] connection. Each event is one
+/// JSON line, distinguished from a [`Response`] by its `event` tag. For now a
+/// change pushes a fresh full [`StatusInfo`] snapshot — coarse but simple, and the
+/// client just re-renders. Finer-grained events can be added later, additively.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum Event {
+    Status(StatusInfo),
 }
 
 /// What `omni status` shows.
@@ -145,5 +179,45 @@ mod tests {
         let line = serde_json::to_string(&response).unwrap();
         let back: Response = serde_json::from_str(&line).unwrap();
         assert_eq!(back, response);
+    }
+
+    #[test]
+    fn hello_handshake_round_trips() {
+        let request = Request::Hello;
+        let line = serde_json::to_string(&request).unwrap();
+        assert_eq!(serde_json::from_str::<Request>(&line).unwrap(), request);
+
+        let response = Response::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            daemon_version: "0.3.7".into(),
+        };
+        let line = serde_json::to_string(&response).unwrap();
+        assert_eq!(serde_json::from_str::<Response>(&line).unwrap(), response);
+    }
+
+    #[test]
+    fn subscribe_request_round_trips() {
+        let line = serde_json::to_string(&Request::Subscribe).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Request>(&line).unwrap(),
+            Request::Subscribe
+        );
+    }
+
+    #[test]
+    fn an_event_is_one_line_tagged_as_an_event() {
+        let event = Event::Status(StatusInfo {
+            fingerprint: "ab".repeat(32),
+            port: 4733,
+            capturing: false,
+            clipboard_sharing: false,
+            sessions: vec![],
+            pending: vec![],
+        });
+        let line = serde_json::to_string(&event).unwrap();
+        assert!(!line.contains('\n'));
+        // The `event` tag is what lets a subscriber tell a push from a response.
+        assert!(line.contains("\"event\":\"status\""));
+        assert_eq!(serde_json::from_str::<Event>(&line).unwrap(), event);
     }
 }
