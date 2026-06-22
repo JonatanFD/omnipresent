@@ -4,6 +4,7 @@
 
 use core_graphics::event::CGEventFlags;
 use omni_protocol::input::{Action, Modifiers, MouseButton};
+use std::time::Duration;
 
 /// Protocol modifiers for a CGEvent flag set.
 pub fn modifiers_from_flags(flags: CGEventFlags) -> Modifiers {
@@ -73,6 +74,30 @@ pub fn cg_button_number(button: MouseButton) -> i64 {
     }
 }
 
+/// The running click count for a new mouse-down, written to a CGEvent's
+/// `kCGMouseEventClickState`. macOS reads this field to recognize gestures:
+/// 1 = single, 2 = double, 3 = triple, and so on. Real hardware gets it from
+/// the OS, but a synthesized click must compute it — otherwise every click is
+/// a fresh single click and double-click never fires.
+///
+/// A press continues the streak (count + 1) only when it is the *same* button
+/// as the previous click, lands within the double-click `interval`, and barely
+/// moved (`distance` within `max_distance`). Anything else restarts at 1.
+pub fn next_click_count(
+    same_button: bool,
+    elapsed: Duration,
+    distance: f64,
+    previous_count: i64,
+    interval: Duration,
+    max_distance: f64,
+) -> i64 {
+    if same_button && elapsed <= interval && distance <= max_distance {
+        previous_count + 1
+    } else {
+        1
+    }
+}
+
 /// The protocol mouse button for a CG button number.
 pub fn button_from_cg_number(number: i64) -> MouseButton {
     match number {
@@ -125,6 +150,50 @@ mod tests {
         let (held, action) = toggle_modifier(held, 60); // right shift up
         assert_eq!(action, Action::Release);
         assert_eq!(held, 0);
+    }
+
+    const INTERVAL: Duration = Duration::from_millis(500);
+    const DISTANCE: f64 = 4.0;
+
+    #[test]
+    fn a_quick_same_spot_click_continues_the_streak() {
+        // single -> double -> triple as long as each press is in time and place.
+        let double = next_click_count(true, Duration::from_millis(120), 1.0, 1, INTERVAL, DISTANCE);
+        assert_eq!(double, 2);
+        let triple = next_click_count(true, Duration::from_millis(120), 1.0, 2, INTERVAL, DISTANCE);
+        assert_eq!(triple, 3);
+    }
+
+    #[test]
+    fn a_slow_click_restarts_at_a_single() {
+        let count = next_click_count(true, Duration::from_millis(900), 1.0, 1, INTERVAL, DISTANCE);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn a_click_that_moved_too_far_restarts_at_a_single() {
+        let count = next_click_count(
+            true,
+            Duration::from_millis(120),
+            50.0,
+            1,
+            INTERVAL,
+            DISTANCE,
+        );
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn a_different_button_restarts_at_a_single() {
+        let count = next_click_count(
+            false,
+            Duration::from_millis(120),
+            0.0,
+            1,
+            INTERVAL,
+            DISTANCE,
+        );
+        assert_eq!(count, 1);
     }
 
     #[test]
