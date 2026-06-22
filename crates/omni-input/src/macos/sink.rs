@@ -1,7 +1,7 @@
 //! Injection: synthesizing events with `CGEventPost`, as if they came from
 //! real hardware. Used while this machine is the Target.
 
-use super::convert::{cg_button_number, flags_from_modifiers};
+use super::convert::{cg_button_number, flags_from_modifiers, next_click_count};
 use super::source::INJECTED_MARKER;
 use super::{MacosInputError, keymap};
 use crate::port::InputSink;
@@ -13,6 +13,7 @@ use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 use omni_protocol::InputEvent;
 use omni_protocol::input::{Action, Modifiers, MouseButton, MouseDelta, ScrollDelta};
+use std::time::{Duration, Instant};
 
 // Posting a `MouseMoved` event repositions the cursor for applications, but
 // macOS will not keep the hardware cursor *drawn* for moves that come purely
@@ -35,11 +36,27 @@ fn keep_cursor_visible(position: DisplayPoint) {
     }
 }
 
+/// macOS's default double-click interval: a second click within this window
+/// (and barely moved) is the second click of a double-click.
+const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+/// How far the pointer may move between two clicks and still count as a
+/// double-click, in display pixels.
+const DOUBLE_CLICK_DISTANCE: f64 = 4.0;
+
+/// The previous click, used to recognize double- and triple-clicks.
+#[derive(Debug, Clone, Copy)]
+struct LastClick {
+    button: i64,
+    at: Instant,
+    position: DisplayPoint,
+    count: i64,
+}
+
 /// Injects remote input into the local OS. The production `InputSink`.
 ///
-/// Holds only plain state (which buttons are down, the last key modifiers), so
-/// it is freely sendable between threads; every injection creates its own
-/// event source.
+/// Holds only plain state (which buttons are down, the last key modifiers, the
+/// last click for double-click tracking), so it is freely sendable between
+/// threads; every injection creates its own event source.
 #[derive(Debug, Default)]
 pub struct MacosSink {
     /// CG button numbers currently held, as a bitmask. Decides whether motion
@@ -48,6 +65,9 @@ pub struct MacosSink {
     /// Modifiers from the most recent key event, applied to mouse events so
     /// modifier-clicks (e.g. Cmd-click) work.
     modifiers: Modifiers,
+    /// The last button press, so a quick second press at the same spot is
+    /// tagged as a double-click rather than two single clicks.
+    last_click: Option<LastClick>,
 }
 
 impl MacosSink {
@@ -125,13 +145,14 @@ impl MacosSink {
             (_, Action::Release) => (CGEventType::OtherMouseUp, CGMouseButton::Center),
         };
         let position = clamp_to_display(cursor_position()?);
+        let click_state = self.click_state(number, action, position);
         let event =
             CGEvent::new_mouse_event(event_source()?, event_type, position.into(), cg_button)
                 .map_err(|_| MacosInputError::EventCreation)?;
         if number >= 2 {
             event.set_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER, number);
         }
-        event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, 1);
+        event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, click_state);
         event.set_flags(flags_from_modifiers(self.modifiers));
         post(&event);
 
@@ -141,6 +162,40 @@ impl MacosSink {
             Action::Release => self.held_buttons &= !bit,
         }
         Ok(())
+    }
+
+    /// The click count to stamp on this button event. A press computes the
+    /// running streak (single/double/triple) from the previous click and
+    /// records itself; the matching release carries the same count, so macOS
+    /// sees a consistent `down(2)/up(2)` for the second click of a double.
+    fn click_state(&mut self, button: i64, action: Action, position: DisplayPoint) -> i64 {
+        match action {
+            Action::Press => {
+                let now = Instant::now();
+                let count = match self.last_click {
+                    Some(last) => next_click_count(
+                        last.button == button,
+                        now.saturating_duration_since(last.at),
+                        position.distance_to(last.position),
+                        last.count,
+                        DOUBLE_CLICK_INTERVAL,
+                        DOUBLE_CLICK_DISTANCE,
+                    ),
+                    None => 1,
+                };
+                self.last_click = Some(LastClick {
+                    button,
+                    at: now,
+                    position,
+                    count,
+                });
+                count
+            }
+            Action::Release => match self.last_click {
+                Some(last) if last.button == button => last.count,
+                _ => 1,
+            },
+        }
     }
 
     fn inject_scroll(&mut self, delta: ScrollDelta) -> Result<(), MacosInputError> {
@@ -208,6 +263,11 @@ impl DisplayPoint {
             x: self.x + delta.dx as f64,
             y: self.y + delta.dy as f64,
         }
+    }
+
+    /// Straight-line distance to another point, for the double-click check.
+    fn distance_to(self, other: DisplayPoint) -> f64 {
+        ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
     }
 }
 
