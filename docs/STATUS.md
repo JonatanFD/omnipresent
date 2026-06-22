@@ -85,7 +85,7 @@ and `cargo test` (98 tests), including on Windows.
 | `omni-input`     | **Implemented** | Ports, in-memory adapters, permission diagnostics, and the real OS adapters: macOS (CGEvent tap + post; the sink warps the cursor so a remote-driven move stays visible and stamps the click-count so double/triple clicks register), Linux (evdev + uinput), and Windows (low-level hooks + SendInput; the local cursor is parked, not hidden). Cursor **hiding** on suppression where it is safe and self-restoring (macOS `CGDisplayHideCursor`, Linux X11 empty-cursor on the root window) and true Linux cursor-position query (`XQueryPointer`). 17 tests. |
 | `omni-clipboard` | **Implemented** | Opt-in clipboard sharing (text + images) over a ports-and-adapters design: `arboard` adapter, in-memory mock, echo-loop guard, strict opt-in toggle queryable at runtime. 8 tests. |
 | `omni-transport` | **Implemented** | `SecureChannel` port, framing, loopback channel, and the real QUIC adapter (quinn + rustls, mTLS, TOFU verifiers, datagrams + control stream). The control-frame limit admits a full clipboard payload so images sync over the reliable stream. The input path is tuned for latency: a shallow datagram send buffer (drops oldest stale positions) and the BBR congestion controller. 13 tests. |
-| `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, cross-platform IPC (Unix socket / Windows named pipe), heartbeats, configurable layout, opt-in clipboard sync over the control stream (toggleable at runtime and persisted), doctor checks, and the composition root that runs the pipelines. The peer task coalesces a backlog of queued cursor positions to the latest one (keeping clicks/keys/scrolls intact) so a congested link does not make the cursor lag. 25 tests + a two-daemon integration test. |
+| `omni-runtime`   | **Implemented** | The daemon: config/paths, persistent identity, trust store, rate limiter, cross-platform IPC (Unix socket / Windows named pipe), heartbeats, configurable layout, opt-in clipboard sync over the control stream (toggleable at runtime and persisted), doctor checks, and the composition root that runs the pipelines. The peer task coalesces a backlog of queued cursor positions to the latest one (keeping clicks/keys/scrolls intact) so a congested link does not make the cursor lag. A live IPC event channel (`Subscribe` → `Event` snapshots, push not poll) and a protocol-version handshake (`Hello`) back native GUI clients. 28 tests + two integration tests. |
 | `omni-cli`       | **Implemented** | The full `omni` binary: start/stop/status, doctor, connect/disconnect, accept/reject, peers (+ remove), layout, clipboard on/off, uninstall, over the daemon's Unix socket. |
 
 ### What `omni-protocol` provides
@@ -327,9 +327,15 @@ each a thin client of the daemon's existing local IPC — no changes to the core
 crates. The design, the binding constraints (GUI-only exception to Rust-only,
 discovery/pairing never bypass accept+TOFU, daemon owns all state), the feature
 inventory, and the phased plan live in
-[`NATIVE_INTEGRATIONS.md`](NATIVE_INTEGRATIONS.md). First piece of work is a
-live **event channel** + protocol version on the IPC (Rust); then an mDNS +
-pairing-code connection backend; then the two apps. Linux stays CLI-only.
+[`NATIVE_INTEGRATIONS.md`](NATIVE_INTEGRATIONS.md).
+
+**Phase 1 is done:** the IPC has a live **event channel** (`Request::Subscribe`
+streams `Event::Status` snapshots on any change, coalesced by a `watch` channel —
+no polling) and a **version handshake** (`Request::Hello` →
+`Response::Hello { protocol_version, daemon_version }`). Next: an mDNS +
+pairing-code connection backend (Rust), then the **Windows** app (C#/WinUI 3,
+in `clients/omni-windows/`) and the **macOS** app (done natively by the owner).
+Linux stays CLI-only.
 
 ## Open decisions
 
