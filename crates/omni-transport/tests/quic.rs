@@ -3,7 +3,10 @@
 //! and the control stream.
 
 use omni_protocol::input::{Action, KeyCode, Modifiers};
-use omni_protocol::{ControlMessage, Fingerprint, InputEvent, Message, ScreenSize, SessionId};
+use omni_protocol::{
+    ClipboardData, ClipboardImage, ControlMessage, Fingerprint, InputEvent, Message, ScreenSize,
+    SessionId,
+};
 use omni_security::{LocalIdentity, generate_identity};
 use omni_transport::{
     HandshakePolicy, PolicyViolation, QuicEndpoint, SecureChannel, Transport, TransportError,
@@ -155,6 +158,38 @@ async fn control_messages_ride_the_reliable_stream() {
     // Finishing the stream surfaces as a clean end on the other side.
     initiator_stream.finish();
     assert_eq!(target_stream.recv().await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_large_clipboard_image_rides_the_control_stream() {
+    let alpha_id = generate_identity("alpha").unwrap();
+    let beta_id = generate_identity("beta").unwrap();
+    let alpha = endpoint(&alpha_id, AllowAll);
+    let beta = endpoint(&beta_id, AllowAll);
+    let beta_addr = beta.local_addr().unwrap();
+
+    let (dialed, accepted) = tokio::join!(alpha.connect(beta_addr, "localhost"), async {
+        beta.accept().await.expect("incoming connection")
+    },);
+    let dialed = dialed.unwrap();
+    let accepted = accepted.unwrap();
+
+    // A modest screenshot is already far larger than a control message: a
+    // 400x400 RGBA image is 640 000 bytes, well past the old 64 KiB frame cap.
+    let width = 400u32;
+    let height = 400u32;
+    let bytes = vec![0xAB; (width * height * 4) as usize];
+    let clipboard = Message::Clipboard(ClipboardData::Image(ClipboardImage {
+        width,
+        height,
+        bytes,
+    }));
+
+    let mut initiator_stream = dialed.open_control().await.expect("open control");
+    initiator_stream.send(&clipboard).await.expect("send image");
+
+    let mut target_stream = accepted.accept_control().await.expect("accept control");
+    assert_eq!(target_stream.recv().await.unwrap(), Some(clipboard));
 }
 
 #[tokio::test]

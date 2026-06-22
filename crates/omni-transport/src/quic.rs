@@ -13,7 +13,7 @@ use crate::endpoint::Endpoint;
 use crate::policy::HandshakePolicy;
 use crate::tls;
 use bytes::Bytes;
-use omni_protocol::{CodecError, Fingerprint, Message, decode, encode};
+use omni_protocol::{CodecError, Fingerprint, MAX_CLIPBOARD_BYTES, Message, decode, encode};
 use omni_security::{LocalIdentity, fingerprint_of};
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::pki_types::CertificateDer;
@@ -27,9 +27,12 @@ use tokio::sync::mpsc;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const KEEP_ALIVE: Duration = Duration::from_secs(5);
 
-/// The largest control frame we will read. Control messages are tiny; anything
-/// bigger is a protocol violation, not a message.
-const MAX_CONTROL_FRAME: usize = 64 * 1024;
+/// The largest control frame we will read. Session signalling is tiny, but the
+/// control stream also carries clipboard payloads — including images, which are
+/// far bigger than a control message — so the limit must admit a full clipboard
+/// payload (capped at [`MAX_CLIPBOARD_BYTES`]) plus the small postcard framing
+/// overhead. Anything beyond that is a protocol violation, not a message.
+const MAX_CONTROL_FRAME: usize = MAX_CLIPBOARD_BYTES + 1024;
 
 /// Why a QUIC operation failed.
 #[derive(Debug)]
