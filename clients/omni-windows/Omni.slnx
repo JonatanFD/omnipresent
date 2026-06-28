@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Omni.App.Core/Omni.App.Core.csproj" />
+    <Project Path="src/Omni.App/Omni.App.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/Omni.Ipc/Omni.Ipc.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Omni.App.Tests/Omni.App.Tests.csproj" />
+    <Project Path="tests/Omni.Ipc.Tests/Omni.Ipc.Tests.csproj" />
+  </Folder>
+</Solution>

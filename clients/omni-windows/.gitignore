@@ -1,0 +1,7 @@
+# .NET build output — never committed.
+bin/
+obj/
+
+# User-specific and tooling files.
+*.user
+.vs/

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- No WinUI here on purpose: the view models are plain .NET so they can be
+         unit-tested without the Windows App SDK or a UI thread. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Omni.Ipc\Omni.Ipc.csproj" />
+  </ItemGroup>
+
+</Project>

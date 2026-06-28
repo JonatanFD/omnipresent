@@ -5,7 +5,16 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-22 (double-click now works when injecting on macOS. The
+_Last updated: 2026-06-27 (the **Windows GUI client (WinUI 3)** landed its first
+implementation under `clients/omni-windows/` — a thin IPC client over the daemon's
+named pipe, MVVM view models, and a Fluent window that shows live status and drives
+accept/reject, connect/disconnect, peers, layout, and the clipboard toggle. Three
+.NET projects (`Omni.Ipc`, `Omni.App.Core`, `Omni.App`) with 27 unit tests, plus a
+per-platform CI job. To make this possible the daemon's Windows **named-pipe name**
+is now a stable SHA-256 of the state directory (it was an unspecified `DefaultHasher`
+that a non-Rust client could not reproduce); Rust and C# assert the same vector so
+they never drift. The tray entry, mDNS/pairing discovery, and `doctor` in the UI are
+still to come. Earlier: double-click now works when injecting on macOS. The
 sink hardcoded each mouse event's `kCGMouseEventClickState` to 1, so a quick
 two-click sequence from a remote controller (Windows → Mac) arrived as two
 single clicks; it now tracks the previous click and stamps the running
@@ -332,10 +341,20 @@ inventory, and the phased plan live in
 **Phase 1 is done:** the IPC has a live **event channel** (`Request::Subscribe`
 streams `Event::Status` snapshots on any change, coalesced by a `watch` channel —
 no polling) and a **version handshake** (`Request::Hello` →
-`Response::Hello { protocol_version, daemon_version }`). Next: an mDNS +
-pairing-code connection backend (Rust), then the **Windows** app (C#/WinUI 3,
-in `clients/omni-windows/`) and the **macOS** app (done natively by the owner).
-Linux stays CLI-only.
+`Response::Hello { protocol_version, daemon_version }`).
+
+**The Windows app (Phase 4) has a first implementation** in
+`clients/omni-windows/` (C#/WinUI 3), ahead of the planned order because the owner
+is taking the macOS app. It is a thin IPC client (`Omni.Ipc`), MVVM view models
+(`Omni.App.Core`), and a Fluent window (`Omni.App`), with 27 unit tests and a
+Windows CI job. It already shows live status and drives accept/reject, connect,
+peers, layout, and clipboard. Still to do on the client: a tray entry for the
+accept prompt when the window is closed, and (after the backend lands) discovery
+and pairing.
+
+Next on the **daemon** side: the mDNS + pairing-code connection backend (Phase 2,
+Rust), which the Windows app and the **macOS** app (done natively by the owner)
+both consume. Linux stays CLI-only.
 
 ## Open decisions
 

@@ -287,7 +287,13 @@ FFI because there is too little logic to share.
    discovery and pairing-code views; visual edge editor; accept/reject; doctor.
    Packaging (signing, notarization) as a sub-task.
 4. **Windows app (C# / WinUI 3).** Named-pipe client; tray + window; same views.
-   Packaging (signing) as a sub-task.
+   Packaging (signing) as a sub-task. **Status:** first implementation landed in
+   `clients/omni-windows/` (thin `Omni.Ipc` client, `Omni.App.Core` view models,
+   `Omni.App` Fluent window; 27 unit tests; Windows CI). The window-based views
+   (status, accept/reject, connect/disconnect, peers, layout, clipboard, version
+   notice) work; the **tray entry**, **discovery/pairing** (await Phase 2), and
+   **doctor** (awaits a new IPC request) are still to do. Brought forward ahead of
+   Phase 3 because the owner is doing the macOS app.
 
 ## Out of scope (for now)
 

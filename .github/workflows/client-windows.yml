@@ -1,0 +1,47 @@
+name: Windows client
+
+# The native Windows GUI lives outside the Cargo workspace and carries its own
+# quality gate (constraint 21 in docs/NATIVE_INTEGRATIONS.md): its tests run on a
+# Windows runner and the WinUI 3 app must build. Scoped by path so it only runs
+# when the client changes.
+on:
+  push:
+    branches: [develop, master]
+    paths:
+      - "clients/omni-windows/**"
+      - ".github/workflows/client-windows.yml"
+  pull_request:
+    paths:
+      - "clients/omni-windows/**"
+      - ".github/workflows/client-windows.yml"
+
+concurrency:
+  group: client-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: build · test (WinUI 3)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: clients/omni-windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Test — IPC client & protocol
+        run: dotnet test tests/Omni.Ipc.Tests/Omni.Ipc.Tests.csproj --configuration Release
+
+      - name: Test — view models
+        run: dotnet test tests/Omni.App.Tests/Omni.App.Tests.csproj --configuration Release
+
+      - name: Build — WinUI 3 app
+        run: dotnet build src/Omni.App/Omni.App.csproj --configuration Release -p:Platform=x64

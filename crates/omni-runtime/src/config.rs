@@ -71,11 +71,16 @@ impl Paths {
     /// directory path so two daemons with different `OMNI_CONFIG_DIR` (tests,
     /// side-by-side runs) get distinct pipes, just as they get distinct socket
     /// files on Unix.
+    ///
+    /// The derivation is a stable SHA-256 of the directory path (first 8 bytes,
+    /// lowercase hex) rather than `DefaultHasher`, whose output is unspecified and
+    /// not reproducible outside Rust. A stable, documented hash lets a non-Rust
+    /// client (the native GUIs) compute the same name and reach the daemon.
     pub fn pipe_name(&self) -> String {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.dir.hash(&mut hasher);
-        format!(r"\\.\pipe\omni-{:016x}", hasher.finish())
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(self.dir.to_string_lossy().as_bytes());
+        let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+        format!(r"\\.\pipe\omni-{hex}")
     }
 
     pub fn log_file(&self) -> PathBuf {
@@ -227,5 +232,18 @@ mod tests {
         let paths = Paths::at("/tmp/omni-x");
         assert!(paths.socket_file().starts_with("/tmp/omni-x"));
         assert!(paths.trust_file().starts_with("/tmp/omni-x"));
+    }
+
+    #[test]
+    fn pipe_name_is_a_stable_hash_of_the_dir() {
+        // A stable, documented derivation so non-Rust clients (the native GUIs)
+        // can reproduce it. This exact vector is also asserted by the C# client
+        // (`clients/omni-windows/.../OmniPathsTests.cs`); keep them in lock-step.
+        let name = Paths::at(r"C:\example\omni").pipe_name();
+        assert_eq!(name, r"\\.\pipe\omni-3bf61631564ef580");
+
+        // Deterministic and directory-specific.
+        assert_eq!(name, Paths::at(r"C:\example\omni").pipe_name());
+        assert_ne!(name, Paths::at(r"C:\other\omni").pipe_name());
     }
 }
