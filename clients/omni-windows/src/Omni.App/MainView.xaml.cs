@@ -18,11 +18,11 @@ public sealed partial class MainView : UserControl
     {
         ViewModel = viewModel;
         InitializeComponent();
+        Loaded += OnLoaded;
     }
 
-    protected override void OnLoaded()
+    private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        base.OnLoaded();
         // Navigate to General by default
         NavView.SelectedItem = NavView.MenuItems[0];
     }
@@ -35,7 +35,7 @@ public sealed partial class MainView : UserControl
 
     private void NavigateToSection(string section)
     {
-        var view = section switch
+        UserControl view = section switch
         {
             "general" => new GeneralView(ViewModel),
             "connections" => new ConnectionsView(ViewModel),
