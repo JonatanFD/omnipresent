@@ -1,15 +1,14 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Omni.App.Core;
-using Omni.Ipc;
+using Omni.App.Views;
 
 namespace Omni.App;
 
 /// <summary>
-/// The application's main view. Pure view: it renders <see cref="DaemonViewModel"/>
-/// and forwards button clicks to it. No daemon/IPC logic lives here. Hosted by
-/// <see cref="MainWindow"/> (a <c>Window</c> is not a <c>FrameworkElement</c>, so
-/// x:Bind lives in this <c>UserControl</c>).
+/// The application's main view: navigation container that switches between
+/// sections (General, Connections, System, Update). Each section is a separate
+/// UserControl hosted in the Frame.
 /// </summary>
 public sealed partial class MainView : UserControl
 {
@@ -21,69 +20,30 @@ public sealed partial class MainView : UserControl
         InitializeComponent();
     }
 
-    private async void OnAcceptClick(object sender, RoutedEventArgs e)
+    protected override void OnLoaded()
     {
-        if (DataContextOf<PendingInfo>(sender) is { } pending)
-        {
-            await ViewModel.AcceptAsync(pending.Fingerprint);
-        }
+        base.OnLoaded();
+        // Navigate to General by default
+        NavView.SelectedItem = NavView.MenuItems[0];
     }
 
-    private async void OnRejectClick(object sender, RoutedEventArgs e)
+    private void OnNavItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
     {
-        if (DataContextOf<PendingInfo>(sender) is { } pending)
-        {
-            await ViewModel.RejectAsync(pending.Fingerprint);
-        }
+        var tag = (args.InvokedItemContainer as NavigationViewItem)?.Tag as string;
+        NavigateToSection(tag ?? "general");
     }
 
-    private async void OnDisconnectClick(object sender, RoutedEventArgs e)
+    private void NavigateToSection(string section)
     {
-        if (DataContextOf<SessionInfo>(sender) is { } session)
+        var view = section switch
         {
-            await ViewModel.DisconnectAsync(session.Host);
-        }
-    }
+            "general" => new GeneralView(ViewModel),
+            "connections" => new ConnectionsView(ViewModel),
+            "system" => new SystemView(ViewModel),
+            "update" => new UpdateView(ViewModel),
+            _ => new GeneralView(ViewModel),
+        };
 
-    private async void OnForgetPeerClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContextOf<PeerInfo>(sender) is { } peer)
-        {
-            await ViewModel.RemovePeerAsync(peer.Fingerprint);
-        }
+        ContentFrame.Content = view;
     }
-
-    private async void OnConnectClick(object sender, RoutedEventArgs e)
-    {
-        var host = HostInput.Text.Trim();
-        if (host.Length > 0)
-        {
-            await ViewModel.ConnectAsync(host);
-            HostInput.Text = "";
-        }
-    }
-
-    private async void OnClipboardToggled(object sender, RoutedEventArgs e)
-    {
-        var toggle = (ToggleSwitch)sender;
-        // Only act on a real user change, not the binding echoing a snapshot.
-        if (toggle.IsOn != ViewModel.ClipboardSharing)
-        {
-            await ViewModel.SetClipboardAsync(toggle.IsOn);
-        }
-    }
-
-    private async void OnSetLayoutClick(object sender, RoutedEventArgs e)
-    {
-        var host = LayoutHostInput.Text.Trim();
-        var edge = (EdgeCombo.SelectedItem as ComboBoxItem)?.Content as string;
-        if (host.Length > 0 && !string.IsNullOrEmpty(edge))
-        {
-            await ViewModel.SetLayoutAsync(host, edge);
-            LayoutHostInput.Text = "";
-        }
-    }
-
-    private static T? DataContextOf<T>(object sender) where T : class =>
-        (sender as FrameworkElement)?.DataContext as T;
 }
