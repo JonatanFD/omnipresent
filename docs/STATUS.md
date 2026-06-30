@@ -5,7 +5,20 @@ module boundaries, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for product scope
 and rules, see [`../CLAUDE.md`](../CLAUDE.md) and
 [`../.claude/rules/constrains.md`](../.claude/rules/constrains.md).
 
-_Last updated: 2026-06-27 (the **Windows GUI client (WinUI 3)** landed its first
+_Last updated: 2026-06-29 (the **Windows GUI client** was reorganized into a
+modular architecture matching the macOS app, and shipped — with a Windows
+uninstall fix — as **v0.5.0**. The monolithic main window split into four views
+(status, connections, peers, settings) behind a `NavigationView` + `Frame`, and
+the duplicated connection markup collapsed into three reusable card components
+(peer, session, pending request) — same behaviour, far less XAML, ready to reuse
+in later views. Alongside it, an `omni uninstall` fix for Windows: the OS locks a
+running `.exe`, so the binary could not delete itself and lingered after the
+config was already gone; uninstall now writes a short detached cleanup script
+that waits for the process to exit and then removes the binary (Unix still
+deletes in place, since the inode survives). The v0.5.0 release tag also carries a
+`Cargo.lock` refresh so the `--locked` release build reports 0.5.0 instead of
+failing on a stale lock. Earlier: the **Windows GUI client (WinUI 3)** landed its
+first
 implementation under `clients/omni-windows/` — a thin IPC client over the daemon's
 named pipe, MVVM view models, and a Fluent window that shows live status and drives
 accept/reject, connect/disconnect, peers, layout, and the clipboard toggle. Three

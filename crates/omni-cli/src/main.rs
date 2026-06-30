@@ -417,10 +417,13 @@ fn uninstall() -> ExitCode {
             // Write batch file to temp directory
             if let Ok(temp_dir) = std::env::var("TEMP") {
                 let batch_path = std::path::PathBuf::from(&temp_dir).join("omni_cleanup.bat");
-                if let Ok(_) = std::fs::write(&batch_path, batch_script) {
-                    // Execute batch in background and detached from current process
+                if std::fs::write(&batch_path, batch_script).is_ok() {
+                    // Run the cleanup batch detached from this process. The empty
+                    // "" is the window title: `start` treats the first quoted
+                    // argument as a title, so without it a batch path containing
+                    // spaces would be parsed as the title and never executed.
                     let _ = Command::new("cmd")
-                        .args(&["/c", "start", "/b"])
+                        .args(["/c", "start", "", "/b"])
                         .arg(batch_path.to_string_lossy().as_ref())
                         .spawn();
                 }
