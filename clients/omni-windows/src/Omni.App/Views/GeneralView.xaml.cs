@@ -13,6 +13,7 @@ public sealed partial class GeneralView : UserControl
     {
         ViewModel = viewModel;
         InitializeComponent();
+        Loaded += OnLoaded;
     }
 
     public string CaptureStatus => ViewModel.Capturing ? "Active" : "Target only";
@@ -27,17 +28,16 @@ public sealed partial class GeneralView : UserControl
         await ViewModel.StopDaemonAsync();
     }
 
-    protected override void OnLoaded()
+    private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        base.OnLoaded();
         UpdateStatusIcon();
 
         // Update icon when connection status changes
         if (ViewModel is INotifyPropertyChanged observable)
         {
-            observable.PropertyChanged += (_, e) =>
+            observable.PropertyChanged += (_, args) =>
             {
-                if (e.PropertyName == nameof(ViewModel.Connection) || e.PropertyName == nameof(ViewModel.IsIncompatible))
+                if (args.PropertyName == nameof(ViewModel.Connection) || args.PropertyName == nameof(ViewModel.IsIncompatible))
                 {
                     UpdateStatusIcon();
                     UpdatePanelVisibility();
@@ -50,10 +50,10 @@ public sealed partial class GeneralView : UserControl
     {
         StatusIcon.Symbol = ViewModel.Connection switch
         {
-            DaemonViewModel.ConnectionStatus.Connected => Symbol.Accept,
-            DaemonViewModel.ConnectionStatus.Connecting => Symbol.WaitUntilDone,
-            DaemonViewModel.ConnectionStatus.Disconnected => Symbol.Block,
-            DaemonViewModel.ConnectionStatus.Incompatible => Symbol.Warning,
+            ConnectionStatus.Connected => Symbol.Accept,
+            ConnectionStatus.Connecting => Symbol.Sync,
+            ConnectionStatus.Disconnected => Symbol.Cancel,
+            ConnectionStatus.Incompatible => Symbol.Important,
             _ => Symbol.Help,
         };
     }

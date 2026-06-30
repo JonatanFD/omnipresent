@@ -13,7 +13,8 @@
             <StackPanel x:Name="EmptyStatePanel"
                         Spacing="12" HorizontalAlignment="Center" VerticalAlignment="Center"
                         Visibility="{x:Bind IsEmpty, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
-                <SymbolIcon Symbol="NetworkOffline" FontSize="48" HorizontalAlignment="Center" />
+                <FontIcon Glyph="&#xE774;" FontSize="48" HorizontalAlignment="Center"
+                          Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 <TextBlock Text="Daemon Not Running" Style="{StaticResource TitleTextBlockStyle}" TextAlignment="Center" />
                 <TextBlock Text="Start the daemon from General to connect to peers."
                            Style="{StaticResource BodyTextBlockStyle}" TextAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
