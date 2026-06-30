@@ -1,0 +1,14 @@
+# Xcode build output
+build/
+DerivedData/
+
+# Per-user Xcode state (window layout, breakpoints, autocreated schemes).
+# Shared schemes under xcshareddata are committed; user data is not.
+xcuserdata/
+*.xcuserstate
+
+# Packaged artifacts
+*.dmg
+
+# macOS
+.DS_Store
