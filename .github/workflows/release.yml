@@ -5,6 +5,10 @@ name: Release
 # archives — plus the install scripts — to a GitHub Release. End users never
 # build from source (no Rust toolchain, no C compiler): they download a
 # prebuilt binary with the one-liners in the README.
+#
+# The native Windows GUI (WinUI 3, `clients/omni-windows`) is also built
+# self-contained and attached as `omni-gui-x86_64-pc-windows-msvc.zip`, so it
+# runs on any Windows x64 box without installing .NET.
 on:
   push:
     tags: ["v*"]
@@ -85,3 +89,41 @@ jobs:
           files: |
             install.sh
             install.ps1
+
+  windows-gui:
+    name: build Windows GUI (WinUI 3)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: clients/omni-windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # Self-contained: the .zip carries the .NET runtime and the Windows App
+      # SDK, so end users download and run it — no .NET install — the same deal
+      # as the CLI. `-o publish` keeps the output path independent of the
+      # target-framework moniker.
+      - name: Publish (self-contained)
+        run: >
+          dotnet publish src/Omni.App/Omni.App.csproj
+          -c Release -r win-x64 --self-contained -p:Platform=x64 -o publish
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $archive = "omni-gui-x86_64-pc-windows-msvc.zip"
+          Compress-Archive -Path "publish/*" -DestinationPath $archive
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          "$hash  $archive" | Out-File "$archive.sha256" -Encoding ascii
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            clients/omni-windows/omni-gui-x86_64-pc-windows-msvc.zip
+            clients/omni-windows/omni-gui-x86_64-pc-windows-msvc.zip.sha256
