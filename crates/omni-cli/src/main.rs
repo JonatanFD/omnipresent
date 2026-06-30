@@ -379,8 +379,6 @@ fn start() -> ExitCode {
 }
 
 fn uninstall() -> ExitCode {
-    use std::process::Command;
-
     // Best effort: the daemon may not be running, and that is fine.
     let _ = request(Request::Stop);
 
@@ -422,7 +420,7 @@ fn uninstall() -> ExitCode {
                     // "" is the window title: `start` treats the first quoted
                     // argument as a title, so without it a batch path containing
                     // spaces would be parsed as the title and never executed.
-                    let _ = Command::new("cmd")
+                    let _ = std::process::Command::new("cmd")
                         .args(["/c", "start", "", "/b"])
                         .arg(batch_path.to_string_lossy().as_ref())
                         .spawn();
