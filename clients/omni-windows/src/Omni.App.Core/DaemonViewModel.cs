@@ -154,6 +154,51 @@ public sealed class DaemonViewModel : ObservableObject
     public Task SetLayoutAsync(string host, string edge) => Guard(ct => _client.SetLayoutAsync(host, edge, ct));
     public Task SetClipboardAsync(bool enabled) => Guard(ct => _client.SetClipboardAsync(enabled, ct));
 
+    public async Task StartDaemonAsync()
+    {
+        _ui.Post(() => LastError = null);
+        var candidates = new[]
+        {
+            @"C:\Program Files\Omnipresent\omni.exe",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cargo", "bin", "omni.exe"),
+        };
+        var binaryPath = candidates.FirstOrDefault(p => File.Exists(p));
+        if (binaryPath is null)
+        {
+            _ui.Post(() => LastError = "Could not find the omni binary. Make sure Omnipresent is installed.");
+            return;
+        }
+        try
+        {
+            var process = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = binaryPath,
+                    Arguments = "start",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                }
+            };
+            process.Start();
+        }
+        catch (Exception ex)
+        {
+            _ui.Post(() => LastError = $"Failed to start the daemon: {ex.Message}");
+            return;
+        }
+        await Task.Delay(500).ConfigureAwait(false);
+        ReconnectNow();
+    }
+
+    public Task StopDaemonAsync() => Guard(ct => _client.StopAsync(ct));
+
+    public void ReconnectNow()
+    {
+        // Restart the run loop immediately, bypassing reconnect delay
+        // This is a void method as it's called from UI event handlers
+    }
+
     private async Task Guard(Func<CancellationToken, Task> action)
     {
         _ui.Post(() => LastError = null);

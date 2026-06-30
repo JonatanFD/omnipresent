@@ -4,193 +4,35 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:Microsoft.UI.Xaml.Controls"
-    xmlns:ipc="using:Omni.Ipc">
+    xmlns:local="using:Omni.App.Views">
 
-    <ScrollViewer Padding="24">
-        <StackPanel Spacing="18" MaxWidth="640" HorizontalAlignment="Stretch">
-
-            <!-- Header -->
-            <StackPanel Spacing="2">
-                <TextBlock Text="Omnipresent" Style="{StaticResource TitleTextBlockStyle}" />
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="{x:Bind ViewModel.StatusText, Mode=OneWay}"
-                               Style="{StaticResource BodyStrongTextBlockStyle}" />
-                    <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
-                               VerticalAlignment="Center"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               Text="{x:Bind ViewModel.DaemonVersion, Mode=OneWay}" />
-                </StackPanel>
+    <Grid RowDefinitions="Auto,*">
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Padding="24,16,24,12" Spacing="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+            <TextBlock Text="Omnipresent" Style="{StaticResource TitleTextBlockStyle}" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="{x:Bind ViewModel.StatusText, Mode=OneWay}"
+                           Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           Text="{x:Bind ViewModel.DaemonVersion, Mode=OneWay}" />
             </StackPanel>
-
-            <!-- Errors / incompatible daemon -->
-            <controls:InfoBar
-                IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}"
-                IsClosable="False"
-                Severity="Error"
-                Title="Something went wrong"
-                Message="{x:Bind ViewModel.LastError, Mode=OneWay}" />
-
-            <!-- Incoming requests (the TOFU accept/reject decision) -->
-            <StackPanel Spacing="8"
-                        Visibility="{x:Bind ViewModel.HasPending, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
-                <TextBlock Text="Incoming requests" Style="{StaticResource SubtitleTextBlockStyle}" />
-                <ItemsControl ItemsSource="{x:Bind ViewModel.Pending, Mode=OneWay}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="ipc:PendingInfo">
-                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,8">
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" Spacing="2">
-                                        <TextBlock Text="{x:Bind Host}" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                        <TextBlock Text="{x:Bind Fingerprint}" Style="{StaticResource CaptionTextBlockStyle}"
-                                                   TextWrapping="Wrap"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                        <Button Content="Accept" Style="{StaticResource AccentButtonStyle}"
-                                                Click="OnAcceptClick" />
-                                        <Button Content="Reject" Click="OnRejectClick" />
-                                    </StackPanel>
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </StackPanel>
-
-            <!-- This machine -->
-            <StackPanel Spacing="8">
-                <TextBlock Text="This machine" Style="{StaticResource SubtitleTextBlockStyle}" />
-                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="8" Padding="12">
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="Fingerprint" Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Text="{x:Bind ViewModel.Fingerprint, Mode=OneWay}" TextWrapping="Wrap"
-                                   IsTextSelectionEnabled="True" FontFamily="Consolas" />
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBlock Text="UDP port:" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock Text="{x:Bind ViewModel.Port, Mode=OneWay}" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBlock Text="Input capture:" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock Text="active"
-                                       Visibility="{x:Bind ViewModel.Capturing, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
-                            <TextBlock Text="inactive (target only)"
-                                       Visibility="{x:Bind ViewModel.Capturing, Mode=OneWay, Converter={StaticResource BoolToVisibility}, ConverterParameter=Invert}" />
-                        </StackPanel>
-                        <ToggleSwitch Header="Share clipboard with peers"
-                                      IsOn="{x:Bind ViewModel.ClipboardSharing, Mode=OneWay}"
-                                      Toggled="OnClipboardToggled" />
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-
-            <!-- Connect to a peer -->
-            <StackPanel Spacing="8">
-                <TextBlock Text="Connect to a peer" Style="{StaticResource SubtitleTextBlockStyle}" />
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBox x:Name="HostInput" PlaceholderText="host or host:port" Width="320"
-                             IsEnabled="{x:Bind ViewModel.IsConnected, Mode=OneWay}" />
-                    <Button Content="Connect" Style="{StaticResource AccentButtonStyle}"
-                            IsEnabled="{x:Bind ViewModel.IsConnected, Mode=OneWay}"
-                            Click="OnConnectClick" />
-                </StackPanel>
-            </StackPanel>
-
-            <!-- Active sessions -->
-            <StackPanel Spacing="8"
-                        Visibility="{x:Bind ViewModel.HasSessions, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
-                <TextBlock Text="Active sessions" Style="{StaticResource SubtitleTextBlockStyle}" />
-                <ItemsControl ItemsSource="{x:Bind ViewModel.Sessions, Mode=OneWay}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="ipc:SessionInfo">
-                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,8">
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" Spacing="2">
-                                        <TextBlock Text="{x:Bind Host}" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                   Text="{x:Bind Role}" />
-                                    </StackPanel>
-                                    <Button Grid.Column="1" Content="Disconnect" VerticalAlignment="Center"
-                                            Click="OnDisconnectClick" />
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </StackPanel>
-
-            <!-- Known peers -->
-            <StackPanel Spacing="8"
-                        Visibility="{x:Bind ViewModel.HasPeers, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
-                <TextBlock Text="Known peers" Style="{StaticResource SubtitleTextBlockStyle}" />
-                <ItemsControl ItemsSource="{x:Bind ViewModel.Peers, Mode=OneWay}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="ipc:PeerInfo">
-                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,8">
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" Spacing="2">
-                                        <TextBlock Text="{x:Bind Host}" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                        <TextBlock Text="{x:Bind Fingerprint}" Style="{StaticResource CaptionTextBlockStyle}"
-                                                   TextWrapping="Wrap"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    </StackPanel>
-                                    <Button Grid.Column="1" Content="Forget" VerticalAlignment="Center"
-                                            Click="OnForgetPeerClick" />
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </StackPanel>
-
-            <!-- Layout -->
-            <StackPanel Spacing="8">
-                <TextBlock Text="Layout" Style="{StaticResource SubtitleTextBlockStyle}" />
-                <ItemsControl ItemsSource="{x:Bind ViewModel.Placements, Mode=OneWay}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="ipc:LayoutInfo">
-                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,0,4">
-                                <TextBlock Text="{x:Bind Host}" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                <TextBlock Text="sits past your" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Text="{x:Bind Edge}" />
-                                <TextBlock Text="edge" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBox x:Name="LayoutHostInput" PlaceholderText="host" Width="200" />
-                    <ComboBox x:Name="EdgeCombo" PlaceholderText="edge" SelectedIndex="0">
-                        <ComboBoxItem Content="left" />
-                        <ComboBoxItem Content="right" />
-                        <ComboBoxItem Content="top" />
-                        <ComboBoxItem Content="bottom" />
-                    </ComboBox>
-                    <Button Content="Place" Click="OnSetLayoutClick" />
-                </StackPanel>
-            </StackPanel>
-
         </StackPanel>
-    </ScrollViewer>
+
+        <!-- Navigation + Content -->
+        <NavigationView Grid.Row="1"
+                        x:Name="NavView"
+                        IsBackButtonVisible="Collapsed"
+                        IsSettingsVisible="False"
+                        ItemInvoked="OnNavItemInvoked">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="General" Icon="Home" Tag="general" />
+                <NavigationViewItem Content="Connections" Icon="Network" Tag="connections" />
+                <NavigationViewItem Content="System" Icon="Setting" Tag="system" />
+                <NavigationViewItem Content="Update" Icon="Download" Tag="update" />
+            </NavigationView.MenuItems>
+            <Frame x:Name="ContentFrame" />
+        </NavigationView>
+    </Grid>
 </UserControl>
