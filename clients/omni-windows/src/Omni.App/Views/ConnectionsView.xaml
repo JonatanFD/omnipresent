@@ -3,7 +3,8 @@
     x:Class="Omni.App.Views.ConnectionsView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:ipc="using:Omni.Ipc">
+    xmlns:ipc="using:Omni.Ipc"
+    xmlns:components="using:Omni.App.Components">
 
     <ScrollViewer Padding="24">
         <StackPanel Spacing="18" MaxWidth="640">
@@ -39,27 +40,9 @@
                     <ItemsControl ItemsSource="{x:Bind ViewModel.Pending, Mode=OneWay}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="ipc:PendingInfo">
-                                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                        BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,8">
-                                    <Grid ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Grid.Column="0" Spacing="2">
-                                            <TextBlock Text="{x:Bind Host}" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                            <TextBlock Text="{x:Bind Fingerprint}" Style="{StaticResource CaptionTextBlockStyle}"
-                                                       TextWrapping="Wrap"
-                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        </StackPanel>
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                            <Button Content="Accept" Style="{StaticResource AccentButtonStyle}"
-                                                    Click="OnAcceptClick" />
-                                            <Button Content="Reject" Click="OnRejectClick" />
-                                        </StackPanel>
-                                    </Grid>
-                                </Border>
+                                <components:PendingRequestCard Request="{x:Bind}"
+                                                               AcceptClicked="OnAcceptClick"
+                                                               RejectClicked="OnRejectClick" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -71,24 +54,8 @@
                     <ItemsControl ItemsSource="{x:Bind ViewModel.Sessions, Mode=OneWay}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="ipc:SessionInfo">
-                                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                        BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,8">
-                                    <Grid ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Grid.Column="0" Spacing="2">
-                                            <TextBlock Text="{x:Bind Host}" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                            <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
-                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                       Text="{x:Bind Role}" />
-                                        </StackPanel>
-                                        <Button Grid.Column="1" Content="Disconnect" VerticalAlignment="Center"
-                                                Click="OnDisconnectClick" />
-                                    </Grid>
-                                </Border>
+                                <components:SessionCard Session="{x:Bind}"
+                                                       ActionClicked="OnDisconnectClick" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -100,24 +67,8 @@
                     <ItemsControl ItemsSource="{x:Bind ViewModel.Peers, Mode=OneWay}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="ipc:PeerInfo">
-                                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                        BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,8">
-                                    <Grid ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Grid.Column="0" Spacing="2">
-                                            <TextBlock Text="{x:Bind Host}" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                            <TextBlock Text="{x:Bind Fingerprint}" Style="{StaticResource CaptionTextBlockStyle}"
-                                                       TextWrapping="Wrap"
-                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        </StackPanel>
-                                        <Button Grid.Column="1" Content="Forget" VerticalAlignment="Center"
-                                                Click="OnForgetPeerClick" />
-                                    </Grid>
-                                </Border>
+                                <components:PeerCard Peer="{x:Bind}"
+                                                     ActionClicked="OnForgetPeerClick" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

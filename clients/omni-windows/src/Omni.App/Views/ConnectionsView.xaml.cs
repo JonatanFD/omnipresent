@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Omni.App.Core;
 using Omni.Ipc;
 
@@ -30,7 +31,9 @@ public sealed partial class ConnectionsView : UserControl
 
     private async void OnAcceptClick(object sender, RoutedEventArgs e)
     {
-        if (DataContextOf<PendingInfo>(sender) is { } pending)
+        // Find the PendingRequestCard and get its Request
+        if (FindComponentByTag<Components.PendingRequestCard>(sender as FrameworkElement) is { } card
+            && card.Request is { } pending)
         {
             await ViewModel.AcceptAsync(pending.Fingerprint);
         }
@@ -38,7 +41,8 @@ public sealed partial class ConnectionsView : UserControl
 
     private async void OnRejectClick(object sender, RoutedEventArgs e)
     {
-        if (DataContextOf<PendingInfo>(sender) is { } pending)
+        if (FindComponentByTag<Components.PendingRequestCard>(sender as FrameworkElement) is { } card
+            && card.Request is { } pending)
         {
             await ViewModel.RejectAsync(pending.Fingerprint);
         }
@@ -46,7 +50,8 @@ public sealed partial class ConnectionsView : UserControl
 
     private async void OnDisconnectClick(object sender, RoutedEventArgs e)
     {
-        if (DataContextOf<SessionInfo>(sender) is { } session)
+        if (FindComponentByTag<Components.SessionCard>(sender as FrameworkElement) is { } card
+            && card.Session is { } session)
         {
             await ViewModel.DisconnectAsync(session.Host);
         }
@@ -54,7 +59,8 @@ public sealed partial class ConnectionsView : UserControl
 
     private async void OnForgetPeerClick(object sender, RoutedEventArgs e)
     {
-        if (DataContextOf<PeerInfo>(sender) is { } peer)
+        if (FindComponentByTag<Components.PeerCard>(sender as FrameworkElement) is { } card
+            && card.Peer is { } peer)
         {
             await ViewModel.RemovePeerAsync(peer.Fingerprint);
         }
@@ -71,6 +77,15 @@ public sealed partial class ConnectionsView : UserControl
         }
     }
 
-    private static T? DataContextOf<T>(object sender) where T : class =>
-        (sender as FrameworkElement)?.DataContext as T;
+    private static T? FindComponentByTag<T>(FrameworkElement? element) where T : class
+    {
+        // Walk up the visual tree to find a component of type T
+        while (element != null)
+        {
+            if (element is T component)
+                return component;
+            element = VisualTreeHelper.GetParent(element) as FrameworkElement;
+        }
+        return null;
+    }
 }

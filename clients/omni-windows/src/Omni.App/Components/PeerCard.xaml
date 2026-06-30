@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Omni.App.Components.PeerCard"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ipc="using:Omni.Ipc">
+
+    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,8">
+        <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Spacing="2">
+                <TextBlock Text="{x:Bind Host, Mode=OneWay}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock Text="{x:Bind Fingerprint, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+                           TextWrapping="Wrap"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+            <Button Grid.Column="1" Content="{x:Bind ButtonLabel, Mode=OneWay}"
+                    VerticalAlignment="Center"
+                    Click="OnButtonClick" />
+        </Grid>
+    </Border>
+</UserControl>
