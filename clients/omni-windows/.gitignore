@@ -1,6 +1,9 @@
 # .NET build output — never committed.
 bin/
 obj/
+publish/
+*.zip
+*.zip.sha256
 
 # User-specific and tooling files.
 *.user
