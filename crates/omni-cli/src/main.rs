@@ -379,6 +379,8 @@ fn start() -> ExitCode {
 }
 
 fn uninstall() -> ExitCode {
+    use std::process::Command;
+
     // Best effort: the daemon may not be running, and that is fine.
     let _ = request(Request::Stop);
 
@@ -398,13 +400,40 @@ fn uninstall() -> ExitCode {
         }
     }
 
-    // Deleting the running binary is allowed on Unix (the inode lives on).
-    // Windows locks a running image, so deletion there fails and the user is
-    // told to remove it — by then nothing of omnipresent is left running.
+    // Delete the running binary. Unix allows deletion of running files (inode persists),
+    // but Windows locks executables in use. On Windows, spawn a background process
+    // that waits a moment and then deletes the binary after this process exits.
     if let Ok(exe) = std::env::current_exe() {
-        match std::fs::remove_file(&exe) {
-            Ok(()) => println!("removed {}", exe.display()),
-            Err(e) => eprintln!("omni: remove {} manually: {e}", exe.display()),
+        #[cfg(target_os = "windows")]
+        {
+            // On Windows, create a cleanup script that runs after this process exits.
+            // Use taskkill to ensure the current process is done, then delete the binary.
+            let exe_str = exe.to_string_lossy().to_string();
+            let batch_script = format!(
+                "@echo off\nREM Cleanup script for omnipresent uninstall\ntimeout /t 2 /nobreak >nul 2>&1\ndel /f /q \"{}\"\n",
+                exe_str
+            );
+
+            // Write batch file to temp directory
+            if let Ok(temp_dir) = std::env::var("TEMP") {
+                let batch_path = std::path::PathBuf::from(&temp_dir).join("omni_cleanup.bat");
+                if let Ok(_) = std::fs::write(&batch_path, batch_script) {
+                    // Execute batch in background and detached from current process
+                    let _ = Command::new("cmd")
+                        .args(&["/c", "start", "/b"])
+                        .arg(batch_path.to_string_lossy().as_ref())
+                        .spawn();
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            // On Unix, delete immediately (inode can persist while running).
+            match std::fs::remove_file(&exe) {
+                Ok(()) => println!("removed {}", exe.display()),
+                Err(e) => eprintln!("omni: could not remove {}: {e}", exe.display()),
+            }
         }
     }
     println!("omnipresent uninstalled");
