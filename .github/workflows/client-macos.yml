@@ -1,0 +1,78 @@
+name: macOS client
+
+# The native macOS GUI lives outside the Cargo workspace and carries its own
+# quality gate (constraint 21 in docs/NATIVE_INTEGRATIONS.md): the SwiftUI app
+# must build, and we package a distributable .dmg. Scoped by path so it only
+# runs when the client changes.
+#
+# Runner note: the Xcode project targets the macOS 26 SDK, so this needs a
+# runner image that ships Xcode 26 (`macos-26`). If that image is unavailable,
+# update `runs-on` and the Xcode path to a version that carries the SDK.
+on:
+  push:
+    branches: [develop, master]
+    paths:
+      - "clients/omni-macos/**"
+      - ".github/workflows/client-macos.yml"
+  pull_request:
+    paths:
+      - "clients/omni-macos/**"
+      - ".github/workflows/client-macos.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: client-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build · package (.dmg)
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: clients/omni-macos
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: xcodebuild -version
+
+      # Release build, ad-hoc signed (no Developer ID secrets in CI). The .dmg
+      # is therefore unsigned/un-notarized: Gatekeeper needs a right-click →
+      # Open on first launch. Signing + notarization is a later step that needs
+      # certificates added as repository secrets.
+      - name: Build (Release)
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project omni-macos.xcodeproj \
+            -scheme omni-macos \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package .dmg
+        run: |
+          set -euo pipefail
+          app="build/Build/Products/Release/omni-macos.app"
+          test -d "$app"
+          # Ad-hoc sign so the bundle launches on Apple silicon after a
+          # Gatekeeper override.
+          codesign --force --deep --sign - "$app"
+
+          staging="$(mktemp -d)"
+          cp -R "$app" "$staging/"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create \
+            -volname "Omnipresent" \
+            -srcfolder "$staging" \
+            -ov -format UDZO \
+            Omnipresent.dmg
+
+      - name: Upload .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: omni-macos-dmg
+          path: clients/omni-macos/Omnipresent.dmg
+          if-no-files-found: error
